@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from torchvision import transforms
 import timm
+import numpy as np
 
 import fiftyone.zoo as foz
 
@@ -99,9 +100,10 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, margin=1.0, semi_hard=True):
+def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, margin=1.0, semi_hard=True, distance_weighted=False):
     model.train()
     running_loss = 0.0
+    cutoff = 0.5
 
     for batch_idx, batch in enumerate(dataloader):
         # Распаковка батча: anchor, positive, negative, anchor_label, negative_label
@@ -144,6 +146,38 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                 loss_i = torch.relu(d_ap - d_an_final + margin)
                 batch_loss += loss_i
             loss = batch_loss / batch_size
+        elif distance_weighted:
+            p_val = 2
+
+            d_ap = torch.norm(anchor_out - positive_out, p=p_val, dim=1)
+            d_an = torch.norm(anchor_out - negative_out, p=p_val, dim=1)
+
+            batch_size, emb_dim = anchor_out.shape
+
+            with torch.no_grad():
+                neg_distance_matrix = (2 - 2 * (anchor_out @ negative_out.T)).sqrt()
+                neg_distance_matrix = neg_distance_matrix.clamp(min=cutoff)
+                
+                log_weights = (2.0 - float(emb_dim)) * neg_distance_matrix.log() - \
+                    float(emb_dim - 3) / 2 * torch.log(torch.clamp(1 - 0.25 * neg_distance_matrix * neg_distance_matrix, min=1e-8))
+
+                weights = torch.exp(log_weights - torch.max(log_weights))
+
+                if weights.device != d_ap.device:
+                    weights = weights.to(d_ap.device)
+
+                weights_sum = torch.sum(weights, dim=1, keepdim=True)
+                weights = weights / weights_sum
+
+            d_an_final = []
+
+            for temp_ind in range(batch_size):
+                neg_sample_index = np.random.choice(batch_size, 1, p=weights[temp_ind].detach().cpu().numpy())
+                d_an_final.append(d_an[neg_sample_index])
+            
+            d_an_final = torch.vstack(d_an_final)
+
+            loss = torch.relu(d_ap - d_an_final + margin).mean()
         else:
             loss = nn.TripletMarginLoss(margin=margin, p=2)(anchor_out, positive_out, negative_out)
 
@@ -216,7 +250,7 @@ def validate_recall_at_k(model, dataloader, k, device):
 
 
 def main():
-    run_name = "baseline"
+    run_name = "distance-weighted"
 
     project_path = os.path.dirname(os.path.abspath(__file__))
     cur_models_dir = os.path.join(project_path, "models", run_name)
@@ -298,7 +332,7 @@ def main():
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=1.0, semi_hard=True)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=1.0, semi_hard=False, distance_weighted=True)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")

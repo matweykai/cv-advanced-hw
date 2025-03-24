@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard.writer import SummaryWriter
 from torchvision import transforms
 import timm
 
@@ -152,6 +153,8 @@ def train_one_epoch(model, dataloader, optimizer, device, margin=1.0, semi_hard=
         running_loss += loss.item()
         if batch_idx % 10 == 0:
             print(f"Batch {batch_idx}/{len(dataloader)}: Loss = {loss.item():.4f}")
+        
+        
 
     avg_loss = running_loss / len(dataloader)
     return avg_loss
@@ -175,6 +178,8 @@ def validate(model, dataloader, criterion, device):
 
             loss = criterion(anchor_out, positive_out, negative_out)
             running_loss += loss.item()
+
+            
 
     avg_loss = running_loss / len(dataloader)
     return avg_loss
@@ -212,12 +217,30 @@ def validate_recall_at_k(model, dataloader, k, device):
 
 
 def main():
+    run_name = "baseline"
+
+    project_path = os.path.dirname(os.path.abspath(__file__))
+    cur_models_dir = os.path.join(project_path, "models", run_name)
+
+    if not os.path.exists(cur_models_dir):
+        os.makedirs(cur_models_dir)
+
+    # Init tensorboard
+    writer = SummaryWriter(os.path.join(project_path, "runs", run_name))
+
+    layout = {
+        "Train Process": {
+            "loss": ["Multiline", ["loss/train", "loss/val"]],
+        },
+    }
+    writer.add_custom_scalars(layout)
+
     # Загружаем датасет Caltech256 через FiftyOne
     dataset = foz.load_zoo_dataset("caltech256")
     print(f"Загружен Caltech256: {len(dataset)} образцов")
 
     # Читаем CSV с валидационными сэмплами (в столбце filename)
-    val_df = pd.read_csv("homework/val.csv")
+    val_df = pd.read_csv("val.csv")
     val_filenames = set(val_df["filename"].tolist())
 
     train_samples = []
@@ -280,8 +303,11 @@ def main():
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
 
-        os.makedirs("train_2", exist_ok=True)
-        torch.save(model.state_dict(), f"train_2/model_epoch_{epoch + 1}.pth")
+        writer.add_scalar("loss/train", train_loss, epoch + 1)
+        writer.add_scalar("loss/val", val_loss, epoch + 1)
+        writer.add_scalar("Recall@k", recall_at_k, epoch + 1)
+
+        torch.save(model.state_dict(), f"{cur_models_dir}/model_epoch_{epoch + 1}.pth")
 
 
 if __name__ == "__main__":

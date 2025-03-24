@@ -272,6 +272,8 @@ def main():
 
     # Определяем трансформации для изображений
     train_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomCrop(size=(224, 224), pad_if_needed=True),
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],

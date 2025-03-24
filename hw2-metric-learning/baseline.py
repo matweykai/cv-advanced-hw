@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import pandas as pd
 from PIL import Image
@@ -216,7 +217,7 @@ def validate_recall_at_k(model, dataloader, k, device):
 
 
 def main():
-    run_name = "baseline"
+    run_name = sys.argv[1]
 
     project_path = os.path.dirname(os.path.abspath(__file__))
     cur_models_dir = os.path.join(project_path, "models", run_name)

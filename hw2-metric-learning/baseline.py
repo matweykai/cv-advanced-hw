@@ -99,7 +99,7 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def train_one_epoch(model, dataloader, optimizer, device, margin=1.0, semi_hard=True):
+def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, margin=1.0, semi_hard=True):
     model.train()
     running_loss = 0.0
 
@@ -152,9 +152,10 @@ def train_one_epoch(model, dataloader, optimizer, device, margin=1.0, semi_hard=
 
         running_loss += loss.item()
         if batch_idx % 10 == 0:
+            sum_writer.add_scalar("loss/train", running_loss / (batch_idx + 1), sum_writer.global_step + batch_idx)
             print(f"Batch {batch_idx}/{len(dataloader)}: Loss = {loss.item():.4f}")
-        
-        
+
+    sum_writer.global_step += len(dataloader)
 
     avg_loss = running_loss / len(dataloader)
     return avg_loss
@@ -178,8 +179,6 @@ def validate(model, dataloader, criterion, device):
 
             loss = criterion(anchor_out, positive_out, negative_out)
             running_loss += loss.item()
-
-            
 
     avg_loss = running_loss / len(dataloader)
     return avg_loss
@@ -227,6 +226,7 @@ def main():
 
     # Init tensorboard
     writer = SummaryWriter(os.path.join(project_path, "runs", run_name))
+    writer.global_step = 0
 
     layout = {
         "Train Process": {
@@ -298,14 +298,14 @@ def main():
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, margin=1.0, semi_hard=True)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=1.0, semi_hard=True)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
 
-        writer.add_scalar("loss/train", train_loss, epoch + 1)
-        writer.add_scalar("loss/val", val_loss, epoch + 1)
-        writer.add_scalar("Recall@k", recall_at_k, epoch + 1)
+        writer.add_scalar("loss/train", train_loss, writer.global_step)
+        writer.add_scalar("loss/val", val_loss, writer.global_step)
+        writer.add_scalar("Recall@k", recall_at_k, writer.global_step)
 
         torch.save(model.state_dict(), f"{cur_models_dir}/model_epoch_{epoch + 1}.pth")
 

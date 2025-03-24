@@ -55,7 +55,7 @@ def compute_base_embeddings(model, dataloader, device):
     return base_embeddings
 
 
-def validate_classification(model, base_embeddings, dataloader, device):
+def validate_classification(model, base_embeddings, dataloader, device, pow_val=2.0):
     """
     Выполняет классификацию валидационного датасета.
     Для каждого изображения выбирается класс с ближайшим (по евклидову расстоянию) бейз-эмбеддингом.
@@ -77,7 +77,7 @@ def validate_classification(model, base_embeddings, dataloader, device):
             images = images.to(device)
             labels = labels.to(device)
             embeddings = model(images)
-            dists = torch.cdist(embeddings, base_embs, p=2)
+            dists = torch.cdist(embeddings, base_embs, p=pow_val)
             preds = torch.argmin(dists, dim=1)
             total += labels.size(0)
             correct += (preds == labels).sum().item()
@@ -116,6 +116,8 @@ class Caltech256ClassificationDataset(Dataset):
 def main():
     # Путь к сохранённой модели и настройки
     model_path = sys.argv[1]
+    pow_val = float(sys.argv[2])
+
     backbone_name = 'levit_128'
     embedding_dim = 128
     batch_size = 32
@@ -178,7 +180,7 @@ def main():
     base_embeddings = compute_base_embeddings(model, train_loader, device)
 
     print("Валидация модели по задаче классификации...")
-    accuracy = validate_classification(model, base_embeddings, val_loader, device)
+    accuracy = validate_classification(model, base_embeddings, val_loader, device, pow_val)
     print(f"Accuracy: {accuracy:.4f}")
 
 

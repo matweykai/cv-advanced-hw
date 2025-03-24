@@ -4,6 +4,7 @@ import random
 import pandas as pd
 from PIL import Image
 
+import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -100,7 +101,7 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, margin=1.0, semi_hard=True):
+def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val=1.0, margin=1.0, semi_hard=True):
     model.train()
     running_loss = 0.0
 
@@ -127,13 +128,13 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
             batch_size = anchor_out.size(0)
 
             for i in range(batch_size):
-                d_ap = torch.norm(anchor_out[i] - positive_out[i], p=2)
+                d_ap = torch.norm(anchor_out[i] - positive_out[i], p=pow_val)
                 mask = (candidate_labels != anchor_label[i])
                 if mask.sum() == 0:
                     chosen_negative = negative_out[i]
                 else:
                     candidate_emb = candidate_embeddings[mask]
-                    d_an = torch.norm(anchor_out[i].unsqueeze(0) - candidate_emb, p=2, dim=1)
+                    d_an = torch.norm(anchor_out[i].unsqueeze(0) - candidate_emb, p=pow_val, dim=1)
                     semi_hard_mask = (d_an > d_ap) & (d_an < d_ap + margin)
                     if semi_hard_mask.sum() > 0:
                         candidate_d_an = d_an[semi_hard_mask]
@@ -141,12 +142,12 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                         chosen_negative = candidate_emb[semi_hard_mask][chosen_idx]
                     else:
                         chosen_negative = negative_out[i]
-                d_an_final = torch.norm(anchor_out[i] - chosen_negative, p=2)
+                d_an_final = torch.norm(anchor_out[i] - chosen_negative, p=pow_val)
                 loss_i = torch.relu(d_ap - d_an_final + margin)
                 batch_loss += loss_i
             loss = batch_loss / batch_size
         else:
-            loss = nn.TripletMarginLoss(margin=margin, p=2)(anchor_out, positive_out, negative_out)
+            loss = nn.TripletMarginLoss(margin=margin, p=pow_val)(anchor_out, positive_out, negative_out)
 
         loss.backward()
         optimizer.step()
@@ -185,7 +186,7 @@ def validate(model, dataloader, criterion, device):
     return avg_loss
 
 
-def validate_recall_at_k(model, dataloader, k, device):
+def validate_recall_at_k(model, dataloader, k, device, pow_val=2):
     model.eval()
     embeddings_list = []
     labels_list = []
@@ -202,7 +203,7 @@ def validate_recall_at_k(model, dataloader, k, device):
     embeddings_all = torch.cat(embeddings_list, dim=0)
     labels_all = torch.cat(labels_list, dim=0)
 
-    distances = torch.cdist(embeddings_all, embeddings_all, p=2)
+    distances = torch.cdist(embeddings_all, embeddings_all, p=pow_val)
     sorted_indices = torch.argsort(distances, dim=1)
 
     hits = 0
@@ -216,8 +217,8 @@ def validate_recall_at_k(model, dataloader, k, device):
     return recall_at_k
 
 
-def main():
-    run_name = sys.argv[1]
+def main(args):
+    run_name = args.run_name
 
     project_path = os.path.dirname(os.path.abspath(__file__))
     cur_models_dir = os.path.join(project_path, "models", run_name)
@@ -298,15 +299,20 @@ def main():
     model = EmbeddingNet(backbone_name="levit_128", embedding_dim=128, pretrained=True)
     model.to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    criterion = nn.TripletMarginLoss(margin=1.0, p=2)
+    # Hyperparams
+    lr = args.learning_rate
+    margin = args.margin
+    pow_val = args.pow_val
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.TripletMarginLoss(margin=margin, p=pow_val)
 
     num_epochs = 2
     k = 1
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=2.0, semi_hard=True)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=margin, semi_hard=True)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
@@ -318,5 +324,16 @@ def main():
         torch.save(model.state_dict(), f"{cur_models_dir}/model_epoch_{epoch + 1}.pth")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--run_name", type=str, default="baseline")
+    parser.add_argument("--learning_rate", type=float, default=1e-3)
+    parser.add_argument("--margin", type=float, default=1.0)
+    parser.add_argument("--pow_val", type=float, default=2.0)
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    main(parse_args())

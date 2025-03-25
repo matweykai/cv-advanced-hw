@@ -17,7 +17,7 @@ import fiftyone.zoo as foz
 from pytorch_metric_learning.distances import LpDistance
 from pytorch_metric_learning.samplers import MPerClassSampler, TuplesToWeightsSampler
 from pytorch_metric_learning.miners import DistanceWeightedMiner, BatchEasyHardMiner
-from pytorch_metric_learning.losses import TripletMarginLoss
+from pytorch_metric_learning.losses import TripletMarginLoss, ArcFaceLoss
 
 
 class TripletFODataset(Dataset):
@@ -147,7 +147,8 @@ def validate_recall_at_k(model, dataloader, k, device, pow_val=2):
     embeddings_all = torch.cat(embeddings_list, dim=0)
     labels_all = torch.cat(labels_list, dim=0)
 
-    distances = torch.cdist(embeddings_all, embeddings_all, p=pow_val)
+    distances = (1 + embeddings_all @ embeddings_all.T) / 2
+
     sorted_indices = torch.argsort(distances, dim=1)
 
     hits = 0
@@ -253,7 +254,8 @@ def main(args):
     margin = args.margin
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = TripletMarginLoss(margin=margin, distance=LpDistance(p=args.pow_val))
+    # criterion = TripletMarginLoss(margin=margin, distance=LpDistance(p=args.pow_val))
+    criterion = ArcFaceLoss(num_classes=len(all_labels), embedding_size=args.emb_size, margin=margin)
 
     num_epochs = 2
     k = 1

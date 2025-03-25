@@ -77,7 +77,8 @@ def validate_classification(model, base_embeddings, dataloader, device, pow_val=
             images = images.to(device)
             labels = labels.to(device)
             embeddings = model(images)
-            dists = torch.cdist(embeddings, base_embs, p=pow_val)
+            # dists = torch.cdist(embeddings, base_embs, p=pow_val)
+            dists = 1 - (1 + embeddings @ base_embs.T) / 2
             preds = torch.argmin(dists, dim=1)
             total += labels.size(0)
             correct += (preds == labels).sum().item()

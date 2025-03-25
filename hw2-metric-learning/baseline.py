@@ -14,6 +14,7 @@ from torchvision import transforms
 import timm
 
 import fiftyone.zoo as foz
+from pytorch_metric_learning.samplers import MPerClassSampler
 
 
 class TripletFODataset(Dataset):
@@ -135,7 +136,7 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                 else:
                     candidate_emb = candidate_embeddings[mask]
                     d_an = torch.norm(anchor_out[i].unsqueeze(0) - candidate_emb, p=pow_val, dim=1)
-                    semi_hard_mask = (d_an > d_ap - margin) & (d_an < d_ap + margin)
+                    semi_hard_mask = (d_an > d_ap) & (d_an < d_ap + margin)
                     if semi_hard_mask.sum() > 0:
                         candidate_d_an = d_an[semi_hard_mask]
                         chosen_idx = torch.argmin(candidate_d_an)
@@ -290,7 +291,9 @@ def main(args):
     train_dataset = TripletFODataset(train_samples, transform=train_transform, label_to_idx=label_to_idx)
     val_dataset = TripletFODataset(val_samples, transform=valid_transform, label_to_idx=label_to_idx)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    balanced_sampler = MPerClassSampler([item[1] for item in train_samples], m=args.m_per_class, batch_size=args.batch_size, length_before_new_iter=len(train_dataset))
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=balanced_sampler, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -332,6 +335,7 @@ def parse_args():
     parser.add_argument("--margin", type=float, default=1.0)
     parser.add_argument("--pow_val", type=float, default=2.0)
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--m_per_class", type=int, default=4)
 
     return parser.parse_args()
 

@@ -15,7 +15,7 @@ import timm
 
 import fiftyone.zoo as foz
 from pytorch_metric_learning.samplers import MPerClassSampler
-from pytorch_metric_learning.miners import DistanceWeightedMiner
+from pytorch_metric_learning.miners import DistanceWeightedMiner, BatchEasyHardMiner
 from pytorch_metric_learning.losses import TripletMarginLoss
 
 
@@ -235,7 +235,8 @@ def main(args):
     val_dataset = TripletFODataset(val_samples, transform=valid_transform, label_to_idx=label_to_idx)
 
     balanced_sampler = MPerClassSampler([item[1] for item in train_samples], m=args.m_per_class, batch_size=args.batch_size, length_before_new_iter=len(train_dataset))
-    miner = DistanceWeightedMiner(cutoff=args.cutoff, nonzero_loss_cutoff=1.4)
+    # miner = DistanceWeightedMiner(cutoff=args.cutoff, nonzero_loss_cutoff=1.4)
+    miner = BatchEasyHardMiner(neg_strategy='semihard')
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=balanced_sampler, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
@@ -249,7 +250,6 @@ def main(args):
     # Hyperparams
     lr = args.learning_rate
     margin = args.margin
-    pow_val = args.pow_val
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = TripletMarginLoss(margin=margin)

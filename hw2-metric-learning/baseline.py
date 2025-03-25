@@ -184,7 +184,27 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
 
             loss = torch.relu(d_ap - d_an_final + margin).mean()
         else:
-            loss = nn.TripletMarginLoss(margin=margin, p=pow_val)(anchor_out, positive_out, negative_out)
+            candidate_embeddings = torch.cat([anchor_out, negative_out], dim=0)
+            candidate_labels = torch.cat([anchor_label, negative_label], dim=0)
+            batch_loss = 0.0
+            batch_size = anchor_out.size(0)
+
+            for i in range(batch_size):
+                d_ap = torch.norm(anchor_out[i] - positive_out[i], p=pow_val)
+                mask = (candidate_labels != anchor_label[i])
+                if mask.sum() == 0:
+                    chosen_negative = negative_out[i]
+                else:
+                    candidate_emb = candidate_embeddings[mask]
+                    d_an = torch.norm(anchor_out[i].unsqueeze(0) - candidate_emb, p=pow_val, dim=1)
+
+                    chosen_negative = negative_out[torch.argmin(d_an)]
+    
+                d_an_final = torch.norm(anchor_out[i] - chosen_negative, p=pow_val)
+                loss_i = torch.relu(d_ap - d_an_final + margin)
+                batch_loss += loss_i
+
+            loss = batch_loss / batch_size
 
         loss.backward()
         optimizer.step()
@@ -352,7 +372,7 @@ def main(args):
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, cutoff=args.cutoff, margin=margin, semi_hard=True if not args.distance_weighted else False, distance_weighted=args.distance_weighted)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, cutoff=args.cutoff, margin=margin, semi_hard=args.semi_hard, distance_weighted=args.distance_weighted)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
@@ -374,6 +394,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--m_per_class", type=int, default=4)
     parser.add_argument("--distance_weighted", action="store_true")
+    parser.add_argument("--semi_hard", action="store_true")
     parser.add_argument("--cutoff", type=float, default=0.5)
     parser.add_argument("--emb_size", type=int, default=128)
 

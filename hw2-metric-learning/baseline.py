@@ -336,7 +336,7 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Используем устройство: {device}")
 
-    model = EmbeddingNet(backbone_name="levit_128", embedding_dim=128, pretrained=True)
+    model = EmbeddingNet(backbone_name="levit_128", embedding_dim=args.emb_size, pretrained=True)
     model.to(device)
 
     # Hyperparams
@@ -375,6 +375,7 @@ def parse_args():
     parser.add_argument("--m_per_class", type=int, default=4)
     parser.add_argument("--distance_weighted", action="store_true")
     parser.add_argument("--cutoff", type=float, default=0.5)
+    parser.add_argument("--emb_size", type=int, default=128)
 
     return parser.parse_args()
 

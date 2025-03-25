@@ -135,7 +135,7 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                 else:
                     candidate_emb = candidate_embeddings[mask]
                     d_an = torch.norm(anchor_out[i].unsqueeze(0) - candidate_emb, p=pow_val, dim=1)
-                    semi_hard_mask = (d_an > d_ap) & (d_an < d_ap + margin)
+                    semi_hard_mask = (d_an > d_ap - margin) & (d_an < d_ap + margin)
                     if semi_hard_mask.sum() > 0:
                         candidate_d_an = d_an[semi_hard_mask]
                         chosen_idx = torch.argmin(candidate_d_an)

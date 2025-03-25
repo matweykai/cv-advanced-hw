@@ -1,9 +1,9 @@
 import os
-import sys
 import random
 import pandas as pd
 from PIL import Image
 
+import numpy as np
 import argparse
 import torch
 import torch.nn as nn
@@ -102,7 +102,7 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val=1.0, margin=1.0, semi_hard=True):
+def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val=1.0, margin=1.0, cutoff=0.5, semi_hard=True, distance_weighted=False):
     model.train()
     running_loss = 0.0
 
@@ -147,6 +147,42 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                 loss_i = torch.relu(d_ap - d_an_final + margin)
                 batch_loss += loss_i
             loss = batch_loss / batch_size
+        elif distance_weighted:
+            p_val = 2
+
+            d_ap = torch.norm(anchor_out - positive_out, p=p_val, dim=1)
+            d_an = torch.norm(anchor_out - negative_out, p=p_val, dim=1)
+
+            batch_size, emb_dim = anchor_out.shape
+
+            with torch.no_grad():
+                neg_distance_matrix = (2 - 2 * (anchor_out @ negative_out.T)).sqrt()
+                neg_distance_matrix = neg_distance_matrix.clamp(min=cutoff)
+                
+                log_weights = (2.0 - float(emb_dim)) * neg_distance_matrix.log() - \
+                    float(emb_dim - 3) / 2 * torch.log(torch.clamp(1 - 0.25 * neg_distance_matrix * neg_distance_matrix, min=1e-8))
+
+                weights = torch.exp(log_weights - torch.max(log_weights))
+
+                if weights.device != d_ap.device:
+                    weights = weights.to(d_ap.device)
+
+                weights_sum = torch.sum(weights, dim=1, keepdim=True)
+                weights = weights / weights_sum
+
+            d_an_final = []
+
+            for temp_ind in range(batch_size):
+                try:
+                    neg_sample_index = np.random.choice(batch_size, 1, p=np.nan_to_num(weights[temp_ind].detach().cpu().numpy(), nan=0))
+                except ValueError:
+                    neg_sample_index = temp_ind
+
+                d_an_final.append(d_an[neg_sample_index])
+            
+            d_an_final = torch.vstack(d_an_final)
+
+            loss = torch.relu(d_ap - d_an_final + margin).mean()
         else:
             loss = nn.TripletMarginLoss(margin=margin, p=pow_val)(anchor_out, positive_out, negative_out)
 
@@ -274,6 +310,7 @@ def main(args):
 
     # Определяем трансформации для изображений
     train_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -291,9 +328,9 @@ def main(args):
     train_dataset = TripletFODataset(train_samples, transform=train_transform, label_to_idx=label_to_idx)
     val_dataset = TripletFODataset(val_samples, transform=valid_transform, label_to_idx=label_to_idx)
 
-    balanced_sampler = MPerClassSampler([item[1] for item in train_samples], m=args.m_per_class, batch_size=args.batch_size, length_before_new_iter=len(train_dataset))
+    # balanced_sampler = MPerClassSampler([item[1] for item in train_samples], m=args.m_per_class, batch_size=args.batch_size, length_before_new_iter=len(train_dataset))
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=balanced_sampler, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -315,7 +352,7 @@ def main(args):
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=margin, semi_hard=True)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, cutoff=args.cutoff, margin=margin, semi_hard=True if not args.distance_weighted else False, distance_weighted=args.distance_weighted)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
@@ -336,6 +373,8 @@ def parse_args():
     parser.add_argument("--pow_val", type=float, default=2.0)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--m_per_class", type=int, default=4)
+    parser.add_argument("--distance_weighted", action="store_true")
+    parser.add_argument("--cutoff", type=float, default=0.5)
 
     return parser.parse_args()
 

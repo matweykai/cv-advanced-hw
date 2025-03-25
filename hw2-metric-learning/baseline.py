@@ -290,8 +290,8 @@ def main(args):
     train_dataset = TripletFODataset(train_samples, transform=train_transform, label_to_idx=label_to_idx)
     val_dataset = TripletFODataset(val_samples, transform=valid_transform, label_to_idx=label_to_idx)
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Используем устройство: {device}")
@@ -331,6 +331,7 @@ def parse_args():
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--margin", type=float, default=1.0)
     parser.add_argument("--pow_val", type=float, default=2.0)
+    parser.add_argument("--batch_size", type=int, default=32)
 
     return parser.parse_args()
 

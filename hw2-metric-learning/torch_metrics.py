@@ -14,7 +14,8 @@ from torchvision import transforms
 import timm
 
 import fiftyone.zoo as foz
-from pytorch_metric_learning.samplers import MPerClassSampler
+from pytorch_metric_learning.distances import LpDistance
+from pytorch_metric_learning.samplers import MPerClassSampler, TuplesToWeightsSampler
 from pytorch_metric_learning.miners import DistanceWeightedMiner, BatchEasyHardMiner
 from pytorch_metric_learning.losses import TripletMarginLoss
 
@@ -234,11 +235,11 @@ def main(args):
     train_dataset = TripletFODataset(train_samples, transform=train_transform, label_to_idx=label_to_idx)
     val_dataset = TripletFODataset(val_samples, transform=valid_transform, label_to_idx=label_to_idx)
 
-    balanced_sampler = MPerClassSampler([item[1] for item in train_samples], m=args.m_per_class, batch_size=args.batch_size, length_before_new_iter=len(train_dataset))
+    # balanced_sampler = MPerClassSampler([item[1] for item in train_samples], m=args.m_per_class, batch_size=args.batch_size, length_before_new_iter=len(train_dataset))
     # miner = DistanceWeightedMiner(cutoff=args.cutoff, nonzero_loss_cutoff=1.4)
     miner = BatchEasyHardMiner(neg_strategy='semihard')
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=balanced_sampler, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -252,7 +253,7 @@ def main(args):
     margin = args.margin
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = TripletMarginLoss(margin=margin)
+    criterion = TripletMarginLoss(margin=margin, distance=LpDistance(p=args.pow_val))
 
     num_epochs = 2
     k = 1

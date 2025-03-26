@@ -101,7 +101,7 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val, margin=1.0, semi_hard=False, distance_weighted=False):
+def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val, margin=1.0, semi_hard=False, distance_weighted=False, cutoff=0.3):
     model.train()
     running_loss = 0.0
 
@@ -149,8 +149,6 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
         elif distance_weighted:
             candidate_embeddings = torch.cat([anchor_out, negative_out], dim=0)
             candidate_labels = torch.cat([anchor_label, negative_label], dim=0)
-
-            cutoff = 0.3
             
             batch_size, dim = anchor_out.shape
             candidates_size, dim = candidate_embeddings.shape
@@ -361,7 +359,7 @@ def main(args):
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, args.pow_val, margin=margin, semi_hard=semi_hard, distance_weighted=distance_weighted)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, args.pow_val, margin=margin, semi_hard=semi_hard, distance_weighted=distance_weighted, cutoff=args.cutoff)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device, args.pow_val)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
@@ -382,6 +380,7 @@ def parse_args():
     parser.add_argument("--semi_hard", action="store_true")
     parser.add_argument("--pow_val", type=float, default=2.0)
     parser.add_argument("--distance_weighted", action="store_true")
+    parser.add_argument("--cutoff", type=float, default=0.3)
 
     return parser.parse_args()
 

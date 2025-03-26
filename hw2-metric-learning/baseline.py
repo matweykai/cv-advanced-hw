@@ -163,9 +163,8 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                     float(emb_dim - 3) / 2 * torch.log(torch.clamp(1 - 0.25 * neg_distance_matrix * neg_distance_matrix, min=1e-8))
 
                 # Mask positive labels
-                weights[negative_label == anchor_label] = 0
-
                 weights = torch.exp(log_weights - torch.max(log_weights))
+                weights[negative_label == anchor_label] = 0
 
                 if weights.device != d_ap.device:
                     weights = weights.to(d_ap.device)

@@ -55,7 +55,7 @@ def compute_base_embeddings(model, dataloader, device):
     return base_embeddings
 
 
-def validate_classification(model, base_embeddings, dataloader, device):
+def validate_classification(model, base_embeddings, dataloader, device, pow_val):
     """
     Выполняет классификацию валидационного датасета.
     Для каждого изображения выбирается класс с ближайшим (по евклидову расстоянию) бейз-эмбеддингом.
@@ -77,7 +77,7 @@ def validate_classification(model, base_embeddings, dataloader, device):
             images = images.to(device)
             labels = labels.to(device)
             embeddings = model(images)
-            dists = torch.cdist(embeddings, base_embs, p=2)
+            dists = torch.cdist(embeddings, base_embs, p=pow_val)
             preds = torch.argmin(dists, dim=1)
             total += labels.size(0)
             correct += (preds == labels).sum().item()
@@ -178,7 +178,7 @@ def main(args):
     base_embeddings = compute_base_embeddings(model, train_loader, device)
 
     print("Валидация модели по задаче классификации...")
-    accuracy = validate_classification(model, base_embeddings, val_loader, device)
+    accuracy = validate_classification(model, base_embeddings, val_loader, device, args.pow_val)
     print(f"Accuracy: {accuracy:.4f}")
 
 
@@ -186,6 +186,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--model_path", type=str, default="")
+    parser.add_argument("--pow_val", type=float, default=2.0)
 
     return parser.parse_args()
 

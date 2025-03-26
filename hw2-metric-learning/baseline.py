@@ -275,7 +275,17 @@ def main(args):
     label_to_idx = {label: idx for idx, label in enumerate(labels_sorted)}
 
     # Определяем трансформации для изображений
-    transform = transforms.Compose([
+    train_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomCrop((224, 224), pad_if_needed=True),
+        transforms.RandomRotation(30),
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
+    ])
+
+    valid_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -283,8 +293,8 @@ def main(args):
     ])
 
     # Создаем PyTorch-датасеты
-    train_dataset = TripletFODataset(train_samples, transform=transform, label_to_idx=label_to_idx)
-    val_dataset = TripletFODataset(val_samples, transform=transform, label_to_idx=label_to_idx)
+    train_dataset = TripletFODataset(train_samples, transform=train_transform, label_to_idx=label_to_idx)
+    val_dataset = TripletFODataset(val_samples, transform=valid_transform, label_to_idx=label_to_idx)
 
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=4)

@@ -8,6 +8,7 @@ from PIL import Image
 import pandas as pd
 import fiftyone as fo
 import fiftyone.zoo as foz
+import argparse
 
 
 class EmbeddingNet(nn.Module):
@@ -112,9 +113,9 @@ class Caltech256ClassificationDataset(Dataset):
         return img, torch.tensor(label)
 
 
-def main():
+def main(args):
     # Путь к сохранённой модели и настройки
-    model_path = 'homework/model_epoch_2.pth'
+    model_path = args.model_path
     backbone_name = 'levit_128'
     embedding_dim = 128
     batch_size = 32
@@ -134,7 +135,7 @@ def main():
     print(f"Загружен Caltech256: {len(dataset)} образцов")
 
     # Читаем CSV с валидационными сэмплами (столбец filename)
-    val_df = pd.read_csv("homework/val.csv")
+    val_df = pd.read_csv("val.csv")
     val_filenames = set(val_df["filename"].tolist())
 
     train_samples = []
@@ -181,5 +182,13 @@ def main():
     print(f"Accuracy: {accuracy:.4f}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--model_path", type=str, default="")
+
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    main()
+    main(parse_args())

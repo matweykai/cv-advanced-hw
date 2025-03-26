@@ -10,6 +10,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import timm
+import numpy as np
 
 import fiftyone.zoo as foz
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -100,7 +101,7 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val, margin=1.0, semi_hard=True):
+def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWriter, pow_val, margin=1.0, semi_hard=False, distance_weighted=False):
     model.train()
     running_loss = 0.0
 
@@ -144,6 +145,52 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
                 d_an_final = torch.norm(anchor_out[i] - chosen_negative, p=pow_val)
                 loss_i = torch.relu(d_ap - d_an_final + margin)
                 batch_loss += loss_i
+            loss = batch_loss / batch_size
+        elif distance_weighted:
+            candidate_embeddings = torch.cat([anchor_out, negative_out], dim=0)
+            candidate_labels = torch.cat([anchor_label, negative_label], dim=0)
+
+            cutoff = 0.3
+            
+            batch_size, dim = anchor_out.shape
+            candidates_size, dim = candidate_embeddings.shape
+
+            anchor_neg_distance = torch.cdist(anchor_out, candidate_embeddings, p=pow_val)
+            anchor_neg_distance = torch.clamp(anchor_neg_distance, min=cutoff)
+
+            log_weights = (2.0 - dim) * torch.log(anchor_neg_distance) - ((dim - 3) / 2) * torch.log(
+                1.0 - 0.25 * (anchor_neg_distance ** 2.0)
+            )
+
+            inf_or_nan = torch.isinf(log_weights) | torch.isnan(log_weights)
+
+            mask = torch.ones_like(log_weights)
+
+            same_class = anchor_label.unsqueeze(1) == candidate_labels.unsqueeze(0)
+            mask[same_class] = 0
+            log_weights = log_weights * mask
+
+            weights = torch.exp(log_weights - torch.max(log_weights[~inf_or_nan]))
+
+            weights = weights * mask
+            weights[inf_or_nan] = 0
+
+            weights = weights / torch.sum(weights, dim=1, keepdim=True)
+
+            batch_loss = 0.0
+
+            for temp_ind in range(batch_size):
+                try:
+                    chosen_ind = np.random.choice(candidates_size, size=1, p=weights[temp_ind].cpu().detach().numpy())
+                    d_an = torch.norm(anchor_out[temp_ind] - candidate_embeddings[chosen_ind[0]], p=pow_val)
+                except ValueError:
+                    d_an = torch.norm(anchor_out[temp_ind] - negative_out[temp_ind], p=pow_val)
+
+                d_ap = torch.norm(anchor_out[temp_ind] - positive_out[temp_ind], p=pow_val)
+
+                loss_i = torch.relu(d_ap - d_an + margin)
+                batch_loss += loss_i
+
             loss = batch_loss / batch_size
         else:
             loss = nn.TripletMarginLoss(margin=margin, p=pow_val)(anchor_out, positive_out, negative_out)
@@ -222,6 +269,7 @@ def main(args):
     lr = args.lr
     margin = args.margin
     semi_hard = args.semi_hard
+    distance_weighted = args.distance_weighted
 
     project_path = os.path.dirname(os.path.abspath(__file__))
     cur_models_dir = os.path.join(project_path, "models", run_name)
@@ -313,7 +361,7 @@ def main(args):
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, args.pow_val, margin=margin, semi_hard=semi_hard)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, args.pow_val, margin=margin, semi_hard=semi_hard, distance_weighted=distance_weighted)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device, args.pow_val)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
@@ -333,6 +381,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--semi_hard", action="store_true")
     parser.add_argument("--pow_val", type=float, default=2.0)
+    parser.add_argument("--distance_weighted", action="store_true")
 
     return parser.parse_args()
 

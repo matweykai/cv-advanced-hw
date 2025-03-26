@@ -156,11 +156,14 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
             batch_size, emb_dim = anchor_out.shape
 
             with torch.no_grad():
-                neg_distance_matrix = (2 - 2 * (anchor_out @ negative_out.T)).sqrt()
+                neg_distance_matrix = torch.norm(anchor_out[:, None, :] - negative_out[:, :, None], p=p_val, dim=2)    # Change to L2
                 neg_distance_matrix = neg_distance_matrix.clamp(min=cutoff)
                 
                 log_weights = (2.0 - float(emb_dim)) * neg_distance_matrix.log() - \
                     float(emb_dim - 3) / 2 * torch.log(torch.clamp(1 - 0.25 * neg_distance_matrix * neg_distance_matrix, min=1e-8))
+
+                # Mask positive labels
+                weights[negative_label == anchor_label] = 0
 
                 weights = torch.exp(log_weights - torch.max(log_weights))
 
@@ -192,6 +195,7 @@ def train_one_epoch(model, dataloader, optimizer, device, sum_writer: SummaryWri
             for i in range(batch_size):
                 d_ap = torch.norm(anchor_out[i] - positive_out[i], p=pow_val)
                 mask = (candidate_labels != anchor_label[i])
+
                 if mask.sum() == 0:
                     chosen_negative = negative_out[i]
                 else:
@@ -374,7 +378,7 @@ def main(args):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
         train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, cutoff=args.cutoff, margin=margin, semi_hard=args.semi_hard, distance_weighted=args.distance_weighted)
         val_loss = validate(model, val_loader, criterion, device)
-        recall_at_k = validate_recall_at_k(model, val_loader, k, device)
+        recall_at_k = validate_recall_at_k(model, val_loader, k, device, pow_val=pow_val)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
 
         writer.add_scalar("loss/train", train_loss, writer.global_step)

@@ -217,7 +217,12 @@ def validate_recall_at_k(model, dataloader, k, device):
 
 
 def main(args):
+    # Hyperparams
     run_name = args.run_name
+    lr = args.lr
+    margin = args.margin
+    semi_hard = args.semi_hard
+
     project_path = os.path.dirname(os.path.abspath(__file__))
     cur_models_dir = os.path.join(project_path, "models", run_name)
 
@@ -290,15 +295,15 @@ def main(args):
     model = EmbeddingNet(backbone_name="levit_128", embedding_dim=128, pretrained=True)
     model.to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    criterion = nn.TripletMarginLoss(margin=1.0, p=2)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.TripletMarginLoss(margin=margin, p=2)
 
     num_epochs = 2
     k = 1
 
     for epoch in range(num_epochs):
         print(f"\nЭпоха {epoch + 1}/{num_epochs}")
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=1.0, semi_hard=True)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, writer, margin=margin, semi_hard=semi_hard)
         val_loss = validate(model, val_loader, criterion, device)
         recall_at_k = validate_recall_at_k(model, val_loader, k, device)
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Recall@{k}: {recall_at_k:.4f}")
@@ -314,6 +319,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--run_name", type=str, default="baseline")
+    parser.add_argument("--margin", type=float, default=1.0)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--semi_hard", action="store_true")
 
     return parser.parse_args()
 

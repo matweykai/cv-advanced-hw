@@ -147,7 +147,7 @@ def validate_recall_at_k(model, dataloader, k, device, pow_val=2):
     embeddings_all = torch.cat(embeddings_list, dim=0)
     labels_all = torch.cat(labels_list, dim=0)
 
-    distances = (1 + embeddings_all @ embeddings_all.T) / 2
+    distances = 1 - (1 + embeddings_all @ embeddings_all.T) / 2
 
     sorted_indices = torch.argsort(distances, dim=1)
 
@@ -253,9 +253,9 @@ def main(args):
     lr = args.learning_rate
     margin = args.margin
 
-    optimizer = optim.Adam(model.parameters(), lr=lr)
     # criterion = TripletMarginLoss(margin=margin, distance=LpDistance(p=args.pow_val))
-    criterion = ArcFaceLoss(num_classes=len(all_labels), embedding_size=args.emb_size, margin=margin)
+    criterion = ArcFaceLoss(num_classes=len(all_labels), embedding_size=args.emb_size, margin=margin).to(device)
+    optimizer = optim.Adam(list(model.parameters()) + list(criterion.parameters()), lr=lr)
 
     num_epochs = 2
     k = 1

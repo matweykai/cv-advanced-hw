@@ -65,12 +65,11 @@ def validate_classification(model, base_embeddings, dataloader, device, pow_val)
     correct = 0
 
     # Преобразуем бейз-эмбеддинги в один тензор
-    base_labels = []
-    base_embs = []
-    for label, emb in base_embeddings.items():
-        base_labels.append(label)
-        base_embs.append(emb.unsqueeze(0))
-    base_embs = torch.cat(base_embs, dim=0)  # размер (num_classes, embedding_dim)
+    sorted_labels = sorted(base_embeddings.keys())
+    base_embs = torch.cat(
+        [base_embeddings[label].unsqueeze(0) for label in sorted_labels],
+        dim=0
+    ).to(device)  # [num_classes, emb_dim]
 
     with torch.no_grad():
         for images, labels in dataloader:

@@ -34,7 +34,7 @@ class EmbeddingNet(nn.Module):
         return x
 
 
-def prepare_knn_model(model, dataloader, device, k_val) -> KNeighborsClassifier:
+def prepare_knn_model(model, dataloader, device, k_val, distance_weighted: bool) -> KNeighborsClassifier:
     model.eval()
     
     embeddings_list = []
@@ -51,7 +51,7 @@ def prepare_knn_model(model, dataloader, device, k_val) -> KNeighborsClassifier:
                 embeddings_list.append(emb.cpu().numpy())
                 labels_list.append(label)
 
-    knn_classifier = KNeighborsClassifier(k_val)
+    knn_classifier = KNeighborsClassifier(k_val, weights='distance' if distance_weighted else 'uniform')
 
     embeddings_matrix = np.vstack(embeddings_list)
 
@@ -172,7 +172,7 @@ def main(args):
     model.to(device)
 
     print("Подготовка KNN классификатора..")
-    knn_classifier = prepare_knn_model(model, train_loader, device, k_val=args.k_val)
+    knn_classifier = prepare_knn_model(model, train_loader, device, k_val=args.k_val, distance_weighted=args.distance_weighted)
 
     print("Валидация модели по задаче классификации...")
     accuracy = validate_classification(model, knn_classifier, val_loader, device)
@@ -184,6 +184,7 @@ def parse_args():
 
     parser.add_argument("--model_path", type=str, default="")
     parser.add_argument("--k_val", type=int, default=3)
+    parser.add_argument("--distance_weighted", action="store_true")
 
     return parser.parse_args()
 

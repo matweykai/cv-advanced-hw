@@ -1,1 +1,5 @@
 .history
+extracted_frames/
+labels/
+video/
+__pycache__/

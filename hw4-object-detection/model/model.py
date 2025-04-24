@@ -1,11 +1,44 @@
-"""
-@author: Yakhyokhuja Valikhujaev <yakhyo9696@gmail.com>
-"""
-
+import lightning as L
 import torch
 import torch.nn as nn
-import lightning as L
-from utils.utils import GlobalAvgPool2d, Conv, Flatten
+
+from .loss import Loss
+
+
+def pad(k, p):
+    if p is None:
+        p = k // 2
+    return p
+
+
+class Conv(nn.Module):
+    def __init__(self, c1, c2, k, s=1, p=None, d=1, g=1, act=True):
+        super(Conv, self).__init__()
+        self.conv = nn.Conv2d(c1, c2, k, s, pad(k, p), dilation=d, groups=g, bias=False)
+        self.bn = nn.BatchNorm2d(c2, momentum=0.03, eps=1e-3)
+        self.act = nn.LeakyReLU(0.01, inplace=True) if act else nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        return self.act(self.bn(self.conv(x)))
+
+
+class GlobalAvgPool2d(nn.Module):
+    def __init__(self):
+        super(GlobalAvgPool2d, self).__init__()
+
+    @staticmethod
+    def forward(x):
+        return torch.mean(x.view(x.size(0), x.size(1), -1), dim=2)
+
+
+class Flatten(nn.Module):
+    def __init__(self):
+        super(Flatten, self).__init__()
+
+    @staticmethod
+    def forward(x):
+        return x.view(x.size(0), -1)
+
 
 
 class Backbone(nn.Module):
@@ -54,7 +87,19 @@ class Backbone(nn.Module):
 
     def forward(self, x):
         return self.classifier(x)
-
+    
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
 
 class Head(nn.Module):
     def __init__(self, feature_size, num_boxes, num_classes):
@@ -106,6 +151,7 @@ class YOLO(L.LightningModule):
             self.features = Backbone().features
             
         self.head = Head(self.num_features, self.num_anchors, self.num_classes)
+        self.loss = Loss()
 
     def forward(self, x):
         x = self.features(x)
@@ -131,6 +177,4 @@ class YOLO(L.LightningModule):
         return loss
     
     def _compute_loss(self, y_hat, y):
-        # Placeholder for actual YOLO loss computation
-        # This would include objectness loss, classification loss, and bounding box regression loss
-        return nn.functional.mse_loss(y_hat, y)
+        return self.loss(y_hat, y)

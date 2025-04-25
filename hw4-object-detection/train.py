@@ -1,283 +1,216 @@
-import glob
-import os
-
-import lightning as L
-import numpy as np
 import torch
-from lightning.pytorch import Trainer
-from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import CSVLogger
-from model import YOLO
-from PIL import Image
-from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, Dataset
-from transforms import get_train_transforms, get_val_transforms
+from torch.utils.data import DataLoader
+
+from loaders.data_loader import PigDataset
+from model.model import YOLOv1
+from model.loss import Loss
+
+import os
+import math
+import tqdm
+import argparse
+import numpy as np
+from collections import defaultdict
+import glob
+
+parser = argparse.ArgumentParser(description='YOLOv1 implementation using PyTorch')
+parser.add_argument('--base_dir', default='./data', required=False, help='Path to data dir')
+parser.add_argument('--log_dir', default='./weights', required=False, help='Path to save weights')
+parser.add_argument('--init_lr', default=0.001, type=float, required=False, help='Initial learning rate')
+parser.add_argument('--base_lr', default=0.01, type=float, required=False, help='Base learning rate')
+parser.add_argument('--momentum', default=0.9, type=float, required=False, help='Momentum')
+parser.add_argument('--weight_decay', default=5.0e-4, type=float, required=False, help='Weight decay')
+parser.add_argument('--num_epochs', default=135, type=int, required=False, help='Number of epochs')
+parser.add_argument('--batch_size', default=64, type=int, required=False, help='Batch size')
+parser.add_argument('--seed', default=42, type=int, required=False, help='Random seed')
+parser.add_argument('--labels_dir', default='labels', type=str, required=False, help='Directory with label files')
+parser.add_argument('--images_dir', default='extracted_frames', type=str, required=False, help='Directory with image files')
+parser.add_argument('--split_ratio', default=0.8, type=float, required=False, help='Train/validation split ratio')
+
+# Learning rate scheduling.
+def update_lr(optimizer, epoch, burning_base, burning_exp=4.0, args=None):
+    if epoch == 0:
+        lr = args.init_lr + (args.base_lr - args.init_lr) * math.pow(burning_base, burning_exp)
+    elif epoch == 1:
+        lr = args.base_lr
+    elif epoch == 75:
+        lr = 0.001
+    elif epoch == 105:
+        lr = 0.0001
+    else:
+        return
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
 
 
-class YOLODataset(Dataset):
-    def __init__(self, image_dir, label_dir, transform=None):
-        self.image_dir = image_dir
-        self.label_dir = label_dir
-        self.transform = transform
-        
-        # Get all image files
-        self.image_files = sorted(glob.glob(os.path.join(image_dir, "*.jpg")))
-        
-        # Ensure we have corresponding labels
-        self.image_files = [img for img in self.image_files if os.path.exists(
-            os.path.join(label_dir, os.path.basename(img).replace('.jpg', '.txt')))]
-    
-    def __len__(self):
-        return len(self.image_files)
-    
-    def __getitem__(self, idx):
-        img_path = self.image_files[idx]
-        
-        # Load image
-        image = Image.open(img_path).convert("RGB")
-        image_np = np.array(image)
-        
-        # Get corresponding label file
-        base_name = os.path.basename(img_path)
-        # Handle the special format with seconds suffix
-        label_name = base_name.replace('.00s.jpg', '.txt')
-        
-        # If this pattern doesn't work, try the standard one
-        if not os.path.exists(os.path.join(self.label_dir, label_name)):
-            # Try extracting frame number and movie
-            parts = base_name.split('_')
-            if len(parts) >= 4:
-                # Format: Movie_X_frame_NNNNNN_YY.00s.jpg -> Movie_X_frame_NNNNNN_YY.txt
-                label_name = f"{parts[0]}_{parts[1]}_{parts[2]}_{parts[3].split('.')[0]}.txt"
-        
-        label_path = os.path.join(self.label_dir, label_name)
-        
-        # Load labels (class, x, y, width, height)
-        boxes = []
-        with open(label_path, 'r') as f:
-            for line in f:
-                if line.strip():
-                    values = line.strip().split()
-                    class_id = int(values[0])
-                    x, y, width, height = map(float, values[1:5])
-                    boxes.append([class_id, x, y, width, height])
-        
-        boxes = np.array(boxes)
-        
-        # Apply transformations if any
-        if self.transform:
-            transformed = self.transform(image=image_np, bboxes=boxes[:, 1:], class_ids=boxes[:, 0])
-            image_np = transformed['image']
-            
-            # Reconstruct boxes with class ids
-            if len(transformed['bboxes']) > 0:
-                transformed_boxes = np.column_stack((
-                    transformed['class_ids'],
-                    np.array(transformed['bboxes'])
-                ))
-                boxes = transformed_boxes
-            else:
-                boxes = np.array([])
-        
-        # Make sure image is in the correct format for training
-        if isinstance(image_np, np.ndarray):
-            # Convert to tensor and normalize
-            image_tensor = torch.tensor(image_np.transpose(2, 0, 1), dtype=torch.float32) / 255.0
-        else:
-            # If still a PIL image
-            image_tensor = torch.tensor(np.array(image).transpose(2, 0, 1), dtype=torch.float32) / 255.0
-        
-        return {
-            'image': image_tensor,
-            'boxes': torch.tensor(boxes, dtype=torch.float32) if len(boxes) > 0 else torch.zeros((0, 5), dtype=torch.float32)
-        }
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
 
 
-class YOLODataModule(L.LightningDataModule):
-    def __init__(self, image_dir="extracted_frames", label_dir="labels", batch_size=16, num_workers=4, val_split=0.2, img_size=416):
-        super().__init__()
-        self.image_dir = image_dir
-        self.label_dir = label_dir
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.val_split = val_split
-        self.img_size = img_size
-        
-        # Initialize transforms
-        self.train_transform = get_train_transforms(height=img_size, width=img_size)
-        self.val_transform = get_val_transforms(height=img_size, width=img_size)
-    
-    def prepare_data(self):
-        # This method is called only once and on only one GPU
-        # Check if directories exist
-        if not os.path.exists(self.image_dir):
-            raise FileNotFoundError(f"Image directory {self.image_dir} does not exist.")
-        if not os.path.exists(self.label_dir):
-            raise FileNotFoundError(f"Label directory {self.label_dir} does not exist.")
-    
-    def setup(self, stage=None):
-        # This method is called on every GPU
-        # Get all image files
-        all_image_files = sorted(glob.glob(os.path.join(self.image_dir, "*.jpg")))
-        
-        # Ensure we have corresponding labels
-        valid_image_files = []
-        for img in all_image_files:
-            # Extract base name without extension
-            base_name = os.path.basename(img)
-            # Handle the special format with seconds suffix
-            label_name = base_name.replace('.00s.jpg', '.txt')
-            
-            # If this pattern doesn't work, try the standard one
-            if not os.path.exists(os.path.join(self.label_dir, label_name)):
-                # Try extracting frame number and movie
-                parts = base_name.split('_')
-                if len(parts) >= 4:
-                    # Format: Movie_X_frame_NNNNNN_YY.00s.jpg -> Movie_X_frame_NNNNNN_YY.txt
-                    label_name = f"{parts[0]}_{parts[1]}_{parts[2]}_{parts[3].split('.')[0]}.txt"
-            
-            label_path = os.path.join(self.label_dir, label_name)
-            if os.path.exists(label_path):
-                # Only include images that have corresponding label files
-                valid_image_files.append(img)
-        
-        print(f"Found {len(all_image_files)} images, {len(valid_image_files)} with valid labels")
-        
-        if len(valid_image_files) == 0:
-            raise ValueError(f"No valid image-label pairs found in {self.image_dir} and {self.label_dir}")
-        
-        # Split into train and validation sets
-        self.train_files, self.val_files = train_test_split(
-            valid_image_files, test_size=self.val_split, random_state=42
-        )
-        
-        # Create datasets based on stage
-        if stage == 'fit' or stage is None:
-            self.train_dataset = YOLODataset(
-                image_dir=self.image_dir,
-                label_dir=self.label_dir,
-                transform=self.train_transform
-            )
-            
-            self.val_dataset = YOLODataset(
-                image_dir=self.image_dir,
-                label_dir=self.label_dir,
-                transform=self.val_transform
-            )
-            
-            # Filter datasets to use only train/val files
-            self.train_dataset.image_files = self.train_files
-            self.val_dataset.image_files = self.val_files
-        
-        if stage == 'test' or stage is None:
-            # For testing, you can use the validation set or a separate test set
-            self.test_dataset = YOLODataset(
-                image_dir=self.image_dir,
-                label_dir=self.label_dir,
-                transform=self.val_transform
-            )
-            self.test_dataset.image_files = self.val_files
-    
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-    
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-    
-    def test_dataloader(self):
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=True
-        )
-    
-    def teardown(self, stage=None):
-        # Clean up after fit or test
-        pass
-    
-    def on_exception(self, exception):
-        # Handle any exceptions
-        print(f"An exception occurred during training: {exception}")
+def train(args, device):
+    # Load YOLO model.
+    net = YOLOv1(pretrained_backbone=False).to(device)
+    # if torch.cuda.device_count() > 1:
+    #     net = torch.nn.DataParallel(net)
 
+    accumulate = max(round(64 / args.batch_size), 1)
 
-def train_yolo(
-    image_dir="extracted_frames",
-    label_dir="labels",
-    batch_size=16,
-    num_workers=4,
-    img_size=416,
-    max_epochs=10,
-    num_classes=2,
-    log_dir="logs",
-    checkpoint_dir="checkpoints"
-):
-    """
-    Train a YOLO model with the given parameters.
+    params = defaultdict()
+    params['weight_decay'] = args.weight_decay
+    params['weight_decay'] *= args.batch_size * accumulate / 64
+
+    pg0, pg1, pg2 = [], [], []
+    for k, v in net.named_modules():
+        if hasattr(v, 'bias') and isinstance(v.bias, torch.nn.Parameter):
+            pg2.append(v.bias)
+        if isinstance(v, torch.nn.BatchNorm2d):
+            pg0.append(v.weight)
+        elif hasattr(v, 'weight') and isinstance(v.weight, torch.nn.Parameter):
+            pg1.append(v.weight)
+
+    optimizer = torch.optim.SGD(pg0, lr=args.init_lr, momentum=args.momentum, nesterov=True)
+    optimizer.add_param_group({'params': pg1, 'weight_decay': params['weight_decay']})
+    optimizer.add_param_group({'params': pg2})
+
+    # Setup loss
+    criterion = Loss()
+
+    # Create a list of all available label files
+    label_files = sorted(glob.glob(os.path.join(args.base_dir, args.labels_dir, '*.txt')))
+    total_files = len(label_files)
+    split_idx = int(total_files * args.split_ratio)
     
-    Args:
-        image_dir (str): Directory containing training images
-        label_dir (str): Directory containing label files
-        batch_size (int): Batch size for training
-        num_workers (int): Number of workers for data loading
-        img_size (int): Image size for training (square)
-        max_epochs (int): Maximum number of training epochs
-        num_classes (int): Number of classes to detect
-        log_dir (str): Directory to save logs
-        checkpoint_dir (str): Directory to save checkpoints
-        
-    Returns:
-        tuple: Trained model and trainer instance
-    """
-    # Initialize data module
-    data_module = YOLODataModule(
-        image_dir=image_dir,
-        label_dir=label_dir,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        img_size=img_size
+    # Extract just the filenames without extensions for passing to datasets
+    train_files = [os.path.splitext(os.path.basename(f))[0] for f in label_files[:split_idx]]
+    val_files = [os.path.splitext(os.path.basename(f))[0] for f in label_files[split_idx:]]
+    
+    print(f'Total files: {total_files}, Train files: {len(train_files)}, Val files: {len(val_files)}')
+
+    # Create datasets with specific file lists
+    train_dataset = PigDataset(
+        is_train=True, 
+        file_names=train_files,
+        base_dir=args.base_dir,
+        labels_dir=args.labels_dir,
+        images_dir=args.images_dir
     )
     
-    # Make sure checkpoint directory exists
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    
-    # Initialize trainer
-    trainer = Trainer(
-        max_epochs=max_epochs,
-        callbacks=[
-            ModelCheckpoint(
-                dirpath=checkpoint_dir,
-                filename="yolo-{epoch:02d}-{val_loss:.2f}",
-                save_top_k=1,
-                mode="min",
-                monitor="val_loss"
-            )
-        ],
-        logger=CSVLogger(log_dir),
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=min(args.batch_size, len(train_dataset)), 
+        shuffle=True, 
+        num_workers=4
+    )
+
+    val_dataset = PigDataset(
+        is_train=False, 
+        file_names=val_files,
+        base_dir=args.base_dir,
+        labels_dir=args.labels_dir,
+        images_dir=args.images_dir
     )
     
-    # Initialize model
-    model = YOLO(num_classes=num_classes, num_anchors=3, num_features=3)
-    
-    # Train model
-    trainer.fit(model, datamodule=data_module)
-    
-    return model, trainer
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=min(args.batch_size // 2, max(1, len(val_dataset))), 
+        shuffle=False, 
+        num_workers=4
+    )
+
+    print('Number of training images: ', len(train_dataset))
+    print('Number of validation images: ', len(val_dataset))
+
+    # Training loop.
+    best_val_loss = np.inf
+
+    for epoch in range(args.num_epochs):
+        print('\n')
+        print('Starting epoch {} / {}'.format(epoch, args.num_epochs))
+
+        # Training.
+        net.train()
+        total_loss = 0.0
+        total_batch = 0
+        print(('\n' + '%10s' * 3) % ('epoch', 'loss', 'gpu'))
+        progress_bar = tqdm.tqdm(enumerate(train_loader), total=len(train_loader))
+        for i, (images, targets) in progress_bar:
+            # Update learning rate.
+            update_lr(optimizer, epoch, float(i) / float(len(train_loader) - 1), args=args)
+            lr = get_lr(optimizer)
+
+            # Load data as a batch.
+            batch_size_this_iter = images.size(0)
+            images, targets = images.to(device), targets.to(device)
+
+            # Forward to compute loss.
+            predictions = net(images)
+            loss = criterion(predictions, targets)
+            loss_this_iter = loss.item()
+            total_loss += loss_this_iter * batch_size_this_iter
+            total_batch += batch_size_this_iter
+
+            # Backward to update model weight.
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
+            s = ('%10s' + '%10.4g' + '%10s') % ('%g/%g' % (epoch + 1, args.num_epochs), total_loss / (i + 1), mem)
+            progress_bar.set_description(s)
+
+        # Validation.
+        net.eval()
+        val_loss = 0.0
+        total_batch = 0
+
+        progress_bar = tqdm.tqdm(enumerate(val_loader), total=len(val_loader))
+        for i, (images, targets) in progress_bar:
+            # Load data as a batch.
+            batch_size_this_iter = images.size(0)
+            images, targets = images.to(device), targets.to(device)
+
+            # Forward to compute validation loss.
+            with torch.no_grad():
+                predictions = net(images)
+            loss = criterion(predictions, targets)
+            loss_this_iter = loss.item()
+            val_loss += loss_this_iter * batch_size_this_iter
+            total_batch += batch_size_this_iter
+        val_loss /= float(total_batch)
+
+        # Save results.
+        save = {'state_dict': net.state_dict()}
+        torch.save(save, os.path.join(args.log_dir, 'final.pth'))
+        if best_val_loss > val_loss:
+            best_val_loss = val_loss
+            save = {'state_dict': net.state_dict()}
+            torch.save(save, os.path.join(args.log_dir, 'best.pth'))
+
+        # Print.
+        print('Epoch [%d/%d], Val Loss: %.4f, Best Val Loss: %.4f'
+              % (epoch + 1, args.num_epochs, val_loss, best_val_loss))
 
 
-if __name__ == "__main__":
-    # This will run when the script is executed directly
-    train_yolo()
+if __name__ == '__main__':
+    args = parser.parse_args()
+    
+    os.makedirs(args.log_dir, exist_ok=True)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    
+    # Check if GPU devices are available.
+    print(f'CUDA DEVICE COUNT: {torch.cuda.device_count()}')
+    
+    # Check for MPS (Apple Silicon) support first, then CUDA, then fall back to CPU
+    if torch.backends.mps.is_available():
+        device = torch.device('mps')
+    elif torch.cuda.is_available():
+        device = torch.device('cuda')
+    else:
+        device = torch.device('cpu')
+    
+    print(f'Using device: {device}')
+    
+    train(args, device)

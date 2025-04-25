@@ -12,11 +12,15 @@ dependencies = [
     "opencv-python-headless",
     "pillow",
     "scikit-learn>=1.6.1",
+    "wandb>=0.19.10",
 ]
 
 [dependency-groups]
 dev = [
     "lightning>=2.5.1",
+    "ipykernel",
+    "isort",
+    "black",
 ]
 
 [tool.uv.sources]

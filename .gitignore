@@ -3,3 +3,6 @@ extracted_frames/
 labels/
 video/
 __pycache__/
+logs/
+wandb/
+checkpoints/

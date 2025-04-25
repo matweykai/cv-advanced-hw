@@ -15,7 +15,7 @@ class Conv(nn.Module):
     def __init__(self, c1, c2, k, s=1, p=None, d=1, g=1, act=True):
         super(Conv, self).__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, pad(k, p), dilation=d, groups=g, bias=False)
-        self.bn = nn.BatchNorm2d(c2, momentum=0.03, eps=1e-3)
+        self.bn = nn.BatchNorm2d(c2, momentum=0.03, eps=1e-3) # TODO: check that it is in paper
         self.act = nn.LeakyReLU(0.01, inplace=True) if act else nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -76,11 +76,13 @@ class Backbone(nn.Module):
             Conv(512, 1024, 3)
         )
 
-        self.classifier = nn.Sequential(
+        layers = [
             *self.features,
             GlobalAvgPool2d(),
             nn.Linear(1024, num_classes)
-        )
+        ]
+
+        self.classifier = nn.Sequential(*layers)
 
         if init_weight:
             self._initialize_weights()
@@ -115,8 +117,8 @@ class Head(nn.Module):
         self.detect = nn.Sequential(
             Flatten(),
             nn.Linear(7 * 7 * 1024, 4096),
-            nn.LeakyReLU(0.01, inplace=True),
             nn.Dropout(0.5),
+            nn.LeakyReLU(0.01, inplace=True),
             nn.Linear(4096, feature_size * feature_size * (5 * num_boxes + num_classes)),
             nn.Sigmoid()
         )
@@ -127,54 +129,33 @@ class Head(nn.Module):
         return x
 
 
-class YOLO(L.LightningModule):
-    def __init__(self, num_classes=20, num_anchors=2, num_features=7, pretrained_backbone=False):
-        super().__init__()
-        
-        self.num_features = num_features
-        self.num_anchors = num_anchors
-        self.num_classes = num_classes
-        
+class YOLOv1(nn.Module):
+    def __init__(self, fs=7, nb=2, nc=20, pretrained_backbone=False):
+        super(YOLOv1, self).__init__()
+
+        self.FS = fs
+        self.NB = nb
+        self.NC = nc
         if pretrained_backbone:
+            self.features = Backbone().features
             darknet = Backbone()
             darknet = nn.DataParallel(darknet)
             src_state_dict = torch.load('model_best.pth.tar')['state_dict']
             dst_state_dict = darknet.state_dict()
 
-            for key in dst_state_dict.keys():
-                print(f'Loading weight of {key}')
-                dst_state_dict[key] = src_state_dict[key]
-            
+            for k in dst_state_dict.keys():
+                print('Loading weight of', k)
+                dst_state_dict[k] = src_state_dict[k]
             darknet.load_state_dict(dst_state_dict)
             self.features = darknet.module.features
         else:
             self.features = Backbone().features
-            
-        self.head = Head(self.num_features, self.num_anchors, self.num_classes)
-        self.loss = Loss()
+        self.head = Head(self.FS, self.NB, self.NC)
 
     def forward(self, x):
         x = self.features(x)
         x = self.head(x)
-        x = x.view(-1, self.num_features, self.num_features, 5 * self.num_anchors + self.num_classes)
+
+        x = x.view(-1, self.FS, self.FS, 5 * self.NB + self.NC)
         return x
-    
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=1e-3)
-    
-    def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        loss = self._compute_loss(y_hat, y)
-        self.log('train_loss', loss)
-        return loss
-    
-    def validation_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        loss = self._compute_loss(y_hat, y)
-        self.log('val_loss', loss)
-        return loss
-    
-    def _compute_loss(self, y_hat, y):
-        return self.loss(y_hat, y)
+

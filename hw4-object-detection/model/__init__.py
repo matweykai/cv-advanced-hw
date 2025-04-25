@@ -1,3 +1,3 @@
-from .model import YOLO
+from .model import YOLOv1
 
-__all__ = ["YOLO"]
+__all__ = ["YOLOv1"]

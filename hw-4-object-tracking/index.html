@@ -158,7 +158,8 @@
         var country_balls = []
 
         try {
-            var ws = new WebSocket('ws://0.0.0.0:8001/ws');
+            // var ws = new WebSocket('ws://0.0.0.0:8001/ws');  // For Docker
+            var ws = new WebSocket('ws://localhost:8001/ws');   // For local usage
         } catch (err) {
             console.log('Connection attempt failed')
         }

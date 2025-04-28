@@ -1,6 +1,7 @@
 import lightning as L
 import torch
 import torch.nn as nn
+import config
 
 from .loss import Loss
 
@@ -130,7 +131,7 @@ class Head(nn.Module):
 
 
 class YOLOv1(nn.Module):
-    def __init__(self, fs=7, nb=2, nc=20, pretrained_backbone=False):
+    def __init__(self, fs=config.S, nb=config.B, nc=config.C, pretrained_backbone=False):
         super(YOLOv1, self).__init__()
 
         self.FS = fs

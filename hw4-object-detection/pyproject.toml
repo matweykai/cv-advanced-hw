@@ -12,6 +12,7 @@ dependencies = [
     "opencv-python-headless",
     "pillow",
     "scikit-learn>=1.6.1",
+    "tensorboard>=2.19.0",
     "wandb>=0.19.10",
 ]
 

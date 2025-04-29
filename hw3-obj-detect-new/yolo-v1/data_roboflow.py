@@ -291,11 +291,6 @@ if __name__ == '__main__':
     train_set = YoloRoboflowDataset('train', normalize=True, augment=True)
     print(f"Train set size: {len(train_set)}")
 
-    # Optional: Initialize and check valid dataset
-    # print("Initializing valid dataset...")
-    # valid_set = YoloRoboflowDataset('valid', normalize=True, augment=False)
-    # print(f"Valid set size: {len(valid_set)}")
-
     # Basic check on the first item
     if len(train_set) > 0:
         print("Checking first item from train set...")
@@ -304,34 +299,5 @@ if __name__ == '__main__':
         print(f"Label non-zero elements: {torch.sum(label != 0)}")
         # Add more checks if needed, e.g., min/max values
         print(f"Data min: {torch.min(data)}, max: {torch.max(data)}")
-
-        # You can uncomment plotting, but ensure classes are loaded correctly
-        # if obj_classes:
-        #      print("Plotting boxes for the first item...")
-        #      # Denormalize data for plotting if normalized
-        #      # plot_data = data.clone() # Avoid modifying original tensor
-        #      # if train_set.normalize:
-        #      #     inv_normalize = T.Normalize(
-        #      #         mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
-        #      #         std=[1/0.229, 1/0.224, 1/0.225]
-        #      #     )
-        #      #     plot_data = inv_normalize(plot_data)
-        #      # Need to use original_data for plotting as augmentations/normalization change it
-        #      utils.plot_boxes(orig_data, label, obj_classes, max_overlap=float('inf'))
-        # else:
-        #      print("Cannot plot boxes, class array not loaded.")
     else:
         print("Train set is empty. Check data directory and file matching logic.")
-
-    # Removed old check loop
-    # negative_labels = 0
-    # smallest = 0
-    # largest = 0
-    # print("Iterating through train set for stats (first 10 items)...")
-    # for i, (data, label, _) in enumerate(train_set):
-    #     if i >= 10: break # Limit check for speed
-    #     # negative_labels += torch.sum(label < 0).item() # This check might not be relevant anymore
-    #     smallest = min(smallest, torch.min(data).item())
-    #     largest = max(largest, torch.max(data).item())
-    # # print('num_negatives', negative_labels) # Commented out irrelevant check
-    # print(f'Checked {min(10, len(train_set))} items. Data range: [{smallest}, {largest}]')

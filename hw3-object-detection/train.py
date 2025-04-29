@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 
-from loaders.data_loader import PigDataset
+from loaders.data_loader import VOCDataset
 from model.model import YOLOv1
 from model.loss import Loss
 
@@ -77,24 +77,14 @@ def train(args, device):
     # Setup loss
     criterion = Loss()
 
-    # Create a list of all available label files
-    label_files = sorted(glob.glob(os.path.join(args.base_dir, args.labels_dir, '*.txt')))
-    total_files = len(label_files)
-    split_idx = int(total_files * args.split_ratio)
-    
-    # Extract just the filenames without extensions for passing to datasets
-    train_files = [os.path.splitext(os.path.basename(f))[0] for f in label_files[:split_idx]]
-    val_files = [os.path.splitext(os.path.basename(f))[0] for f in label_files[split_idx:]]
-    
-    print(f'Total files: {total_files}, Train files: {len(train_files)}, Val files: {len(val_files)}')
+    train_names = [f.rsplit('.jpg', 1)[0] for f in os.listdir(args.base_dir + '/train') if f.endswith('.jpg')]
+    val_names = [f.rsplit('.jpg', 1)[0] for f in os.listdir(args.base_dir + '/valid') if f.endswith('.jpg')]
 
     # Create datasets with specific file lists
-    train_dataset = PigDataset(
-        is_train=True, 
-        file_names=train_files,
+    train_dataset = VOCDataset(
+        is_train=True,
         base_dir=args.base_dir,
-        labels_dir=args.labels_dir,
-        images_dir=args.images_dir
+        file_names=train_names,
     )
     
     train_loader = DataLoader(
@@ -104,12 +94,10 @@ def train(args, device):
         num_workers=4
     )
 
-    val_dataset = PigDataset(
+    val_dataset = VOCDataset(
         is_train=False, 
-        file_names=val_files,
         base_dir=args.base_dir,
-        labels_dir=args.labels_dir,
-        images_dir=args.images_dir
+        file_names=val_names,
     )
     
     val_loader = DataLoader(

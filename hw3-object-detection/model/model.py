@@ -1,10 +1,6 @@
-import lightning as L
 import torch
 import torch.nn as nn
 import config
-
-from .loss import Loss
-
 
 def pad(k, p):
     if p is None:
@@ -43,7 +39,7 @@ class Flatten(nn.Module):
 
 
 class Backbone(nn.Module):
-    def __init__(self, num_classes=1000, init_weight=True):
+    def __init__(self, num_classes=config.C, init_weight=True):
         super().__init__()
 
         self.features = nn.Sequential(
@@ -151,7 +147,7 @@ class YOLOv1(nn.Module):
             self.features = darknet.module.features
         else:
             self.features = Backbone().features
-        self.head = Head(self.FS, self.NB, self.NC)
+        self.head = Head(fs, nb, nc)
 
     def forward(self, x):
         x = self.features(x)

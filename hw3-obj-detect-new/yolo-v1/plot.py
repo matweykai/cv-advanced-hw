@@ -8,7 +8,7 @@ from models import YOLOv1
 from torch.utils.data import DataLoader
 
 
-MODEL_DIR = 'models/yolo_v1/08_19_2022/08_42_58'
+MODEL_DIR = 'models/yolo_v1/04_29_2025/02_44_28'
 
 
 def plot_test_images():
@@ -19,7 +19,7 @@ def plot_test_images():
 
     model = YOLOv1()
     model.eval()
-    model.load_state_dict(torch.load(os.path.join(MODEL_DIR, 'weights', 'final')))
+    model.load_state_dict(torch.load(os.path.join(MODEL_DIR, 'weights', 'final'), map_location=utils.device))
 
     count = 0
     with torch.no_grad():

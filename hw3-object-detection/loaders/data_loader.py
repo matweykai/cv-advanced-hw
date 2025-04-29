@@ -5,13 +5,13 @@ import torchvision.transforms as transforms
 import random
 import numpy as np
 import cv2
+import xml.etree.ElementTree as ET
 import os
 
 
-class PigDataset(Dataset):
+class VOCDataset(Dataset):
 
-    def __init__(self, is_train, file_names=None, base_dir=None, image_size=448, grid_size=7, num_bboxes=2, num_classes=20, 
-                 labels_dir='labels', images_dir='extracted_frame', split_ratio=0.8):
+    def __init__(self, is_train, file_names, base_dir, image_size=448, grid_size=7, num_bboxes=2, num_classes=20):
         self.is_train = is_train
         self.image_size = image_size
 
@@ -26,54 +26,39 @@ class PigDataset(Dataset):
 
         self.paths, self.boxes, self.labels = [], [], []
 
-        if file_names is not None:
-            # If specific file names are provided
-            for line in file_names:
-                file_name = line.rstrip()
-                label_path = os.path.join(base_dir, labels_dir, f"{file_name}.txt")
-                image_path = os.path.join(base_dir, images_dir, f"{file_name}.jpg")
-                self._process_file(label_path, image_path)
-        else:
-            # If no specific files, load all files from the directories and split by ratio
-            label_files = [f for f in os.listdir(os.path.join(base_dir, labels_dir)) if f.endswith('.txt')]
-            # Sort to ensure same order in train/val splits
-            label_files.sort()
+        for line in file_names:
+            label_path = f"{base_dir}/{'train' if is_train else 'valid'}/{line}.xml"
+            image_path = f"{base_dir}/{'train' if is_train else 'valid'}/{line}.jpg"
             
-            # Determine split point
-            split_idx = int(len(label_files) * split_ratio)
+            # Parse XML file in VOC format
+            tree = ET.parse(label_path)
+            root = tree.getroot()
             
-            # Select appropriate subset based on is_train flag
-            selected_files = label_files[:split_idx] if is_train else label_files[split_idx:]
+            box = []
+            label = []
             
-            for label_file in selected_files:
-                file_base = os.path.splitext(label_file)[0]
-                label_path = os.path.join(base_dir, labels_dir, label_file)
-                image_path = os.path.join(base_dir, images_dir, f"{file_base}.jpg")
-                self._process_file(label_path, image_path)
-
-        self.num_samples = len(self.paths)
-        
-    def _process_file(self, label_path, image_path):
-        # Only add the file if both label and image exist
-        if os.path.exists(label_path) and os.path.exists(image_path):
-            self.paths.append(image_path)
-            with open(label_path) as f:
-                objects = f.readlines()
-                box = []
-                label = []
-                for object in objects:
-                    parts = object.rstrip().split()
-                    if len(parts) >= 5:  # Ensure we have enough parts
-                        c = int(parts[0])
-                        x1, y1, x2, y2 = map(float, parts[1:5])
-                        box.append([x1, y1, x2, y2])
-                        label.append(c)
-                if box:  # Only add if we found valid boxes
+            # Extract object information from XML
+            for obj in root.findall('object'):
+                name = obj.find('name').text
+                # Map class names to class indices (you may need to customize this)
+                class_idx = 0 if name == 'worker' else 1  # Assuming 'worker' is 0, 'pig' is 1
+                
+                bbox = obj.find('bndbox')
+                x1 = int(float(bbox.find('xmin').text))
+                y1 = int(float(bbox.find('ymin').text))
+                x2 = int(float(bbox.find('xmax').text))
+                y2 = int(float(bbox.find('ymax').text))
+                
+                box.append([x1, y1, x2, y2])
+                label.append(class_idx)
+                
+                if len(box) > 0:
                     self.boxes.append(torch.Tensor(box))
                     self.labels.append(torch.LongTensor(label))
-                else:
-                    # Remove the path if no valid boxes were found
-                    self.paths.pop()
+                    self.paths.append(image_path)
+
+
+        self.num_samples = len(self.paths)
 
     def __getitem__(self, idx):
         path = self.paths[idx]
@@ -314,23 +299,20 @@ class PigDataset(Dataset):
 def test():
     from torch.utils.data import DataLoader
 
-    base_dir = './'  # Adjust to your base directory
-    
-    # Test with automatic split
-    train_dataset = PigDataset(is_train=True, base_dir=base_dir)
-    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False, num_workers=0)
-    
-    val_dataset = PigDataset(is_train=False, base_dir=base_dir)
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=0)
+    base_dir = 'data'
 
-    print(f"Training samples: {len(train_dataset)}")
-    print(f"Validation samples: {len(val_dataset)}")
+    import os
     
-    # Iterate through a few batches
-    data_iter = iter(train_loader)
-    for i in range(min(3, len(train_loader))):
+    train_names = [f.rsplit('.jpg', 1)[0] for f in os.listdir(base_dir + '/train') if f.endswith('.jpg')]
+
+    dataset = VOCDataset(is_train=True, file_names=train_names, base_dir=base_dir)
+    data_loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+
+    data_iter = iter(data_loader)
+    for i in range(100):
         img, target = next(data_iter)
-        print(f"Batch {i}: Image shape: {img.shape}, Target shape: {target.shape}")
+        print(img.size(), target.size())
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     test()

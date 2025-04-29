@@ -13,6 +13,7 @@ from metrics import TrackerMetricCollector
 
 
 from soft_tracker import SoftTracker
+from strong_tracker import StrongTracker
 
 app = FastAPI(title='Tracker assignment')
 imgs = glob.glob('imgs/*')
@@ -20,7 +21,10 @@ country_balls = [{'cb_id': x, 'img': imgs[x % len(imgs)]} for x in range(country
 print('Started')
 
 soft_tracker = SoftTracker(forget_time=5, max_match_dist=100)
-metrics_collector = TrackerMetricCollector()
+soft_metrics_collector = TrackerMetricCollector()
+
+strong_tracker = StrongTracker(forget_time=5, max_match_dist=1.5)
+strong_metrics_collector = TrackerMetricCollector()
 
 
 def tracker_soft(el):
@@ -54,7 +58,7 @@ def tracker_soft(el):
     for data_ind, temp_track_id in zip(det_box_ind_to_data, track_ids):
         el['data'][data_ind]['track_id'] = temp_track_id
 
-    metrics_collector.update(FramePrediction.model_validate(el))
+    soft_metrics_collector.update(FramePrediction.model_validate(el))
 
     return el
 
@@ -80,6 +84,22 @@ def tracker_strong(el):
     на повторном прогоне можете читать сохраненные фреймы из папки
     и по координатам вырезать необходимые регионы.
     """
+    # Sort tracker + matching based on gIOU
+    det_box_ind_to_data = []
+    det_boxes = []
+
+    for temp_ind, temp_data in enumerate(el['data']):
+        if len(temp_data['bounding_box']) != 0:
+            det_box_ind_to_data.append(temp_ind)
+            det_boxes.append(temp_data['bounding_box'])
+    
+    track_ids = soft_tracker.track(det_boxes)
+
+    for data_ind, temp_track_id in zip(det_box_ind_to_data, track_ids):
+        el['data'][data_ind]['track_id'] = temp_track_id
+
+    strong_metrics_collector.update(FramePrediction.model_validate(el))
+
     return el
 
 
@@ -95,15 +115,17 @@ async def websocket_endpoint(websocket: WebSocket):
         # TODO: part 1
         el = tracker_soft(el)
         # TODO: part 2
-        # el = tracker_strong(el)
+        el = tracker_strong(el)
         # отправка информации по фрейму
         # json_el = json.dumps(el)
         print(el)
         await websocket.send_json(el)
     # добавьте сюда код рассчета метрики
-    track_metric_val = metrics_collector.calculate()
+    soft_track_metric_val = soft_metrics_collector.calculate()
+    print(f'Soft track metric: {round(soft_track_metric_val, 3)}')
 
-    print(f'Track metric: {round(track_metric_val, 3)}')
+    strong_track_metric_val = strong_metrics_collector.calculate()
+    print(f'Strong track metric: {round(strong_track_metric_val, 3)}')
 
     print('Bye..')
 

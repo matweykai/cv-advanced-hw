@@ -1,0 +1,18 @@
+{
+  "model_dir": "models/yolo_v1/04_29_2025/20_03_37",
+  "weights_file": "final",
+  "timestamp": "20250429_200515",
+  "config": {
+    "iou_threshold": 0.5,
+    "confidence_threshold": 0.01,
+    "batch_size": 16,
+    "num_validation_images": 24
+  },
+  "metrics": {
+    "mAP_0.50": 0.0,
+    "ap_per_class": {
+      "pig": 0.0,
+      "worker": 0.0
+    }
+  }
+}

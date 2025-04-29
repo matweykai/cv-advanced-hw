@@ -8,8 +8,16 @@ from models import YOLOv1
 from torch.utils.data import DataLoader
 
 
-MODEL_DIR = 'models/yolo_v1/04_29_2025/02_44_28'
-
+base_dir = 'models/yolo_v1'
+if os.path.exists(base_dir):
+    dates = os.listdir(base_dir)
+    if dates:
+        latest_date = max(dates)
+        times = os.listdir(os.path.join(base_dir, latest_date))
+        if times:
+            latest_time = max(times)
+            MODEL_DIR = os.path.join(base_dir, latest_date, latest_time)
+            print(f"Using most recent model directory: {MODEL_DIR}")
 
 def plot_test_images():
     classes = utils.load_class_array()

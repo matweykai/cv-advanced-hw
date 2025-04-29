@@ -10,8 +10,13 @@ from loss import SumSquaredErrorLoss
 from models import YOLOv1
 import config
 from utils import device
+import wandb
 
-if __name__ == '__main__':      # Prevent recursive subprocess creation
+
+if __name__ == '__main__':   
+
+    wandb.init(project="yolo")
+   # Prevent recursive subprocess creation
     torch.autograd.set_detect_anomaly(True)         # Check for nan loss
     writer = SummaryWriter()
     now = datetime.now()
@@ -20,10 +25,9 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
     loss_function = SumSquaredErrorLoss()
 
     # Adam works better
-    optimizer = torch.optim.SGD(
+    optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config.LEARNING_RATE,
-        momentum=0.9,
         weight_decay=5E-4
     )
 
@@ -90,22 +94,35 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
     for epoch in tqdm(range(config.WARMUP_EPOCHS + config.EPOCHS), desc='Epoch'):
         model.train()
         train_loss = 0
-        for data, labels, _ in tqdm(train_loader, desc='Train', leave=False):
+        for batch_idx, (data, labels, _) in enumerate(tqdm(train_loader, desc='Train', leave=False)):
             data = data.to(device)
             labels = labels.to(device)
 
             optimizer.zero_grad()
             predictions = model.forward(data)
             loss = loss_function(predictions, labels)
+            
+            # Debug info for loss components
+            if batch_idx % 10 == 0:
+                with torch.no_grad():
+                    # Check if predictions have any reasonable values
+                    pred_confidence = predictions[..., config.C + 4].detach()
+                    gt_confidence = labels[..., config.C + 4].detach()
+                    print(f"Batch {batch_idx}:")
+                    print(f"  Pred confidence: min={pred_confidence.min().item():.4f}, max={pred_confidence.max().item():.4f}, mean={pred_confidence.mean().item():.4f}")
+                    print(f"  GT confidence: min={gt_confidence.min().item():.4f}, max={gt_confidence.max().item():.4f}, mean={gt_confidence.mean().item():.4f}")
+                    print(f"  Batch loss: {loss.item():.4f}")
+            
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item() / len(train_loader)
+            wandb.log({"train_loss": loss.item()})
             del data, labels
 
         # Step and graph scheduler once an epoch
-        # writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], epoch)
-        # scheduler.step()
+        writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], epoch)
+        scheduler.step()
 
         train_losses = np.append(train_losses, [[epoch], [train_loss]], axis=1)
         writer.add_scalar('Loss/train', train_loss, epoch)
@@ -125,7 +142,6 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
                     del data, labels
             test_losses = np.append(test_losses, [[epoch], [test_loss]], axis=1)
             writer.add_scalar('Loss/test', test_loss, epoch)
-            print("test_loss", test_loss)
             save_metrics()
     save_metrics()
     torch.save(model.state_dict(), os.path.join(weight_dir, 'final'))

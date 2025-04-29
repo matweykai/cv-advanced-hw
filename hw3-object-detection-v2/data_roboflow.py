@@ -145,7 +145,6 @@ class YoloRoboflowDataset(Dataset):
         grid_size_y = config.IMAGE_SIZE[1] / config.S
 
         # Process bounding boxes into the SxSx(5*B+C) ground truth tensor
-     # Process bounding boxes into the SxSx(5*B+C) ground truth tensor
         boxes = {}
         class_names = {}                    # Track what class each grid cell has been assigned to
         depth = 5 * config.B + config.C     # 5 numbers per bbox, then one-hot encoding of label
@@ -184,17 +183,16 @@ class YoloRoboflowDataset(Dataset):
                     bbox_index = boxes.get(cell, 0)
                     if bbox_index < config.B:
                         bbox_truth = (
-                            (mid_x - col * grid_size_x) / config.IMAGE_SIZE[0],     # X coord relative to grid square
-                            (mid_y - row * grid_size_y) / config.IMAGE_SIZE[1],     # Y coord relative to grid square
-                            (x_max - x_min) / config.IMAGE_SIZE[0],                 # Width
-                            (y_max - y_min) / config.IMAGE_SIZE[1],                 # Height
+                            (mid_x - col * grid_size_x) / grid_size_x,              # X coord relative to grid square (normalized 0-1)
+                            (mid_y - row * grid_size_y) / grid_size_y,              # Y coord relative to grid square (normalized 0-1)
+                            (x_max - x_min) / config.IMAGE_SIZE[0],                 # Width relative to image size
+                            (y_max - y_min) / config.IMAGE_SIZE[1],                 # Height relative to image size
                             1.0                                                     # Confidence
                         )
 
-                        # Fill all bbox slots with current bbox (starting from current bbox slot, avoid overriding prev)
-                        # This prevents having "dead" boxes (zeros) at the end, which messes up IOU loss calculations
+                        # Fill only the appropriate bbox slot
                         bbox_start = 5 * bbox_index + config.C
-                        ground_truth[row, col, bbox_start:] = torch.tensor(bbox_truth).repeat(config.B - bbox_index)
+                        ground_truth[row, col, bbox_start:bbox_start + 5] = torch.tensor(bbox_truth)
                         boxes[cell] = bbox_index + 1
 
         return data, ground_truth, original_data
@@ -206,7 +204,7 @@ class YoloRoboflowDataset(Dataset):
 if __name__ == '__main__':
     # Display data
     obj_classes = utils.load_class_array()
-    train_set = YoloRoboflowDataset('train', normalize=True, augment=True)
+    train_set = YoloRoboflowDataset('train', normalize=False, augment=False)
 
     negative_labels = 0
     smallest = 0
@@ -215,6 +213,42 @@ if __name__ == '__main__':
         negative_labels += torch.sum(label < 0).item()
         smallest = min(smallest, torch.min(data).item())
         largest = max(largest, torch.max(data).item())
-        utils.plot_boxes(data, label, obj_classes, max_overlap=float('inf'))
+        # utils.plot_boxes(data, label, obj_classes, max_overlap=float('inf'))
+    # Calculate mean and std of the training dataset
+    print("Calculating mean and std of the training dataset...")
+    
+    # Initialize variables for mean and std calculation
+    sum_pixels = 0
+    sum_squared_pixels = 0
+    num_pixels = 0
+    
+    # Create a DataLoader to efficiently process the dataset
+    from torch.utils.data import DataLoader
+    loader = DataLoader(train_set, batch_size=32, num_workers=4, shuffle=False)
+    
+    # Iterate through the dataset
+    from tqdm import tqdm
+    for batch, _, _ in tqdm(loader):
+        # batch shape: [B, C, H, W]
+        batch_size = batch.size(0)
+        channels = batch.size(1)
+        height = batch.size(2)
+        width = batch.size(3)
+        
+        # Reshape to [B, C, H*W]
+        batch = batch.view(batch_size, channels, -1)
+        
+        # Sum all pixel values and squared pixel values
+        sum_pixels += torch.sum(batch, dim=[0, 2])
+        sum_squared_pixels += torch.sum(batch ** 2, dim=[0, 2])
+        num_pixels += batch_size * height * width
+    
+    # Calculate mean and std
+    mean = sum_pixels / num_pixels
+    var = (sum_squared_pixels / num_pixels) - (mean ** 2)
+    std = torch.sqrt(var)
+    
+    print(f"Dataset mean: {mean}")
+    print(f"Dataset std: {std}")
     # print('num_negatives', negative_labels)
     # print('dist', smallest, largest)

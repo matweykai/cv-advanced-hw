@@ -30,13 +30,13 @@ class YOLOv1(nn.Module):
         for i in range(4):                                                          # Conv 4
             layers += [
                 nn.Conv2d(512, 256, kernel_size=1),
-                # nn.LeakyReLU(negative_slope=0.1),
+                nn.LeakyReLU(negative_slope=0.1),
                 nn.Conv2d(256, 512, kernel_size=3, padding=1),
                 nn.LeakyReLU(negative_slope=0.1)
             ]
         layers += [
             nn.Conv2d(512, 512, kernel_size=1),
-            # nn.LeakyReLU(negative_slope=0.1),
+            nn.LeakyReLU(negative_slope=0.1),
             nn.Conv2d(512, 1024, kernel_size=3, padding=1),
             nn.LeakyReLU(negative_slope=0.1),
             nn.MaxPool2d(kernel_size=2, stride=2)
@@ -45,7 +45,7 @@ class YOLOv1(nn.Module):
         for i in range(2):                                                          # Conv 5
             layers += [
                 nn.Conv2d(1024, 512, kernel_size=1),
-                # nn.LeakyReLU(negative_slope=0.1),
+                nn.LeakyReLU(negative_slope=0.1),
                 nn.Conv2d(512, 1024, kernel_size=3, padding=1),
                 nn.LeakyReLU(negative_slope=0.1)
             ]
@@ -65,7 +65,7 @@ class YOLOv1(nn.Module):
         layers += [
             nn.Flatten(),
             nn.Linear(config.S * config.S * 1024, 4096),                            # Linear 1
-            nn.Dropout(),
+            nn.Dropout(0.5),
             nn.LeakyReLU(negative_slope=0.1),
             nn.Linear(4096, config.S * config.S * self.depth),                      # Linear 2
         ]

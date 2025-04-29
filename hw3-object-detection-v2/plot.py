@@ -32,12 +32,6 @@ def plot_test_images():
                     classes,
                     file=os.path.join('results', f'{count}')
                 )
-                # utils.plot_boxes(
-                #     original[i, :, :, :],
-                #     labels[i, :, :, :],
-                #     classes,
-                #     color='green'
-                # )
                 count += 1
 
 

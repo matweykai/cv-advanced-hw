@@ -13,6 +13,7 @@ from utils.nms import nms
 # VOC class names and BGR color.
 VOC_CLASS_BGR = {
     'pig': (128, 0, 0),
+    'worker': (0, 128, 0)
 }
 
 
@@ -46,22 +47,46 @@ def visualize_boxes(image_bgr, boxes, class_names, probs, name_bgr_dict=None, li
 
 class YOLODetector:
     def __init__(self,
-                 model_path, class_name_list=None, mean_rgb=[74.66735538, 76.50005623, 74.29610217],
-                 conf_thresh=0.1, prob_thresh=0.1, nms_thresh=0.5):
+                 model_path, 
+                 class_name_list=None, 
+                 mean_rgb=[74.66735538, 76.50005623, 74.29610217],
+                 conf_thresh=0.1, 
+                 prob_thresh=0.1, 
+                 nms_thresh=0.5,
+                 use_cuda=False):
 
         # Load YOLO model.
         print("Loading YOLO model...")
         yolo = YOLOv1()
-
+        
+        self.device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         self.yolo = yolo
-        self.yolo.load_state_dict(torch.load(model_path)['state_dict'])
-        # self.yolo.cuda()
-        if torch.cuda.device_count() > 1:
+        
+        # Load weights from model path
+        state_dict = torch.load(model_path, map_location=self.device)
+
+        # Remove 'module.' prefix from state_dict keys if present
+        if 'state_dict' in state_dict:
+            new_state_dict = {}
+            for k, v in state_dict['state_dict'].items():
+                name = k[7:] if k.startswith('module.') else k  # Remove 'module.' prefix
+                new_state_dict[name] = v
+            self.yolo.load_state_dict(new_state_dict)
+        else:
+            self.yolo.load_state_dict(state_dict)
+        
+        # Move model to device
+        self.yolo = self.yolo.to(self.device)
+        
+        # Use DataParallel if multiple GPUs available
+        if use_cuda and torch.cuda.device_count() > 1:
             self.yolo = torch.nn.DataParallel(self.yolo)
-        print("Done loading!")
+            
+        print(f"Model loaded on {self.device}!")
 
         self.yolo.eval()
 
+        # Get model parameters from config
         self.S = config.S
         self.B = config.B
         self.C = config.C
@@ -72,29 +97,33 @@ class YOLODetector:
         self.mean = np.array(mean_rgb, dtype=np.float32)
         assert self.mean.shape == (3,)
 
+        # Detection thresholds
         self.conf_thresh = conf_thresh
         self.prob_thresh = prob_thresh
         self.nms_thresh = nms_thresh
 
         self.to_tensor = transforms.ToTensor()
 
-        # Warm up.
-        dummy_input = torch.zeros((1, 3, 448, 448))
-        # dummy_input = dummy_input.cuda()
-        for i in range(10):
-            self.yolo(dummy_input)
+        # Warm up the model
+        self._warmup()
+        
+    def _warmup(self, iterations=10):
+        """Warm up the model with dummy inputs"""
+        dummy_input = torch.zeros((1, 3, 448, 448)).to(self.device)
+        with torch.no_grad():
+            for _ in range(iterations):
+                self.yolo(dummy_input)
 
     def detect(self, image_bgr, image_size=448):
         h, w, _ = image_bgr.shape
-        img = cv2.resize(image_bgr, dsize=(image_size, image_size), interpolation=cv2.INTER_LINEAR)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # assuming the model is trained with RGB images.
-        img = (img - self.mean) / 255.0
-        img = self.to_tensor(img)  # [image_size, image_size, 3] -> [3, image_size, image_size]
-        img = img[None, :, :, :]  # [3, image_size, image_size] -> [1, 3, image_size, image_size]
-        # img = img.cuda()
-
+        
+        # Preprocess image
+        img = self._preprocess_image(image_bgr, image_size)
+        
+        # Forward pass
         with torch.no_grad():
             pred_tensor = self.yolo(img)
+            
         pred_tensor = pred_tensor.cpu().data
         pred_tensor = pred_tensor.squeeze(0)  # squeeze batch dimension.
 
@@ -104,6 +133,32 @@ class YOLODetector:
             return [], [], []  # if no box found, return empty lists.
 
         # Apply non maximum supression for boxes of each class.
+        boxes_normalized, class_labels, probs = self._apply_nms(
+            boxes_normalized_all, 
+            class_labels_all, 
+            confidences_all, 
+            class_scores_all
+        )
+
+        # Convert normalized coordinates to image coordinates
+        boxes_detected, class_names_detected, probs_detected = self._postprocess_detections(
+            boxes_normalized, class_labels, probs, w, h
+        )
+
+        return boxes_detected, class_names_detected, probs_detected
+        
+    def _preprocess_image(self, image_bgr, image_size):
+        """Preprocess an image for detection"""
+        img = cv2.resize(image_bgr, dsize=(image_size, image_size), interpolation=cv2.INTER_LINEAR)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # assuming the model is trained with RGB images.
+        img = (img - self.mean) / 255.0
+        img = self.to_tensor(img)  # [image_size, image_size, 3] -> [3, image_size, image_size]
+        img = img[None, :, :, :]  # [3, image_size, image_size] -> [1, 3, image_size, image_size]
+        img = img.to(self.device)
+        return img
+    
+    def _apply_nms(self, boxes_normalized_all, class_labels_all, confidences_all, class_scores_all):
+        """Apply non-maximum suppression to detection results"""
         boxes_normalized, class_labels, probs = [], [], []
 
         for class_label in range(len(self.class_name_list)):
@@ -122,32 +177,42 @@ class YOLODetector:
             class_labels.append(class_labels_maked[ids])
             probs.append(confidences_masked[ids] * class_scores_masked[ids])
 
+        if not boxes_normalized:  # Check if all lists are empty
+            return torch.FloatTensor(0, 4), torch.LongTensor(0), torch.FloatTensor(0)
+            
         boxes_normalized = torch.cat(boxes_normalized, 0)
         class_labels = torch.cat(class_labels, 0)
         probs = torch.cat(probs, 0)
-
-        # Postprocess for box, labels, probs.
+        
+        return boxes_normalized, class_labels, probs
+    
+    def _postprocess_detections(self, boxes_normalized, class_labels, probs, image_width, image_height):
+        """Convert normalized coordinates to image coordinates and class indices to names"""
         boxes_detected, class_names_detected, probs_detected = [], [], []
+        
         for b in range(boxes_normalized.size(0)):
             box_normalized = boxes_normalized[b]
             class_label = class_labels[b]
             prob = probs[b]
 
-            x1, x2 = w * box_normalized[0], w * box_normalized[2]  # unnormalize x with image width.
-            y1, y2 = h * box_normalized[1], h * box_normalized[3]  # unnormalize y with image height.
+            # Unnormalize coordinates with image dimensions
+            x1, x2 = image_width * box_normalized[0], image_width * box_normalized[2]
+            y1, y2 = image_height * box_normalized[1], image_height * box_normalized[3]
             boxes_detected.append(((x1, y1), (x2, y2)))
 
-            class_label = int(class_label)  # convert from LongTensor to int.
+            # Convert class index to class name
+            class_label = int(class_label)
             class_name = self.class_name_list[class_label]
             class_names_detected.append(class_name)
 
-            prob = float(prob)  # convert from Tensor to float.
+            # Convert probability from tensor to float
+            prob = float(prob)
             probs_detected.append(prob)
-
+            
         return boxes_detected, class_names_detected, probs_detected
 
     def decode(self, pred_tensor):
-
+        """Decode prediction tensor to boxes, labels, confidences and scores"""
         S, B, C = self.S, self.B, self.C
         boxes, labels, confidences, class_scores = [], [], [], []
 
@@ -158,7 +223,6 @@ class YOLODetector:
             conf = torch.cat((conf, pred_tensor[:, :, 5 * b + 4].unsqueeze(2)), 2)
         conf_mask = conf > self.conf_thresh  # [S, S, B]
 
-        # TBM, further optimization may be possible by replacing the following for-loops with tensor operations.
         for i in range(S):  # for x-dimension.
             for j in range(S):  # for y-dimension.
                 class_score, class_label = torch.max(pred_tensor[j, i, 5 * B:], 0)
@@ -171,15 +235,12 @@ class YOLODetector:
 
                     # Compute box corner (x1, y1, x2, y2) from tensor.
                     box = pred_tensor[j, i, 5 * b: 5 * b + 4]
-                    x0y0_normalized = torch.FloatTensor([i,
-                                                         j]) * cell_size  # cell left-top corner. Normalized from 0.0 to 1.0 w.r.t. image width/height.
-                    xy_normalized = box[
-                                    :2] * cell_size + x0y0_normalized  # box center. Normalized from 0.0 to 1.0 w.r.t. image width/height.
-                    wh_normalized = box[
-                                    2:]  # Box width and height. Normalized from 0.0 to 1.0 w.r.t. image width/height.
-                    box_xyxy = torch.FloatTensor(4)  # [4,]
-                    box_xyxy[:2] = xy_normalized - 0.5 * wh_normalized  # left-top corner (x1, y1).
-                    box_xyxy[2:] = xy_normalized + 0.5 * wh_normalized  # right-bottom corner (x2, y2).
+                    x0y0_normalized = torch.FloatTensor([i, j]) * cell_size  # cell left-top corner
+                    xy_normalized = box[:2] * cell_size + x0y0_normalized  # box center
+                    wh_normalized = box[2:]  # Box width and height
+                    box_xyxy = torch.FloatTensor(4)
+                    box_xyxy[:2] = xy_normalized - 0.5 * wh_normalized  # left-top corner (x1, y1)
+                    box_xyxy[2:] = xy_normalized + 0.5 * wh_normalized  # right-bottom corner (x2, y2)
 
                     # Append result to the lists.
                     boxes.append(box_xyxy)
@@ -202,28 +263,57 @@ class YOLODetector:
         return boxes, labels, confidences, class_scores
 
 
-if __name__ == '__main__':
-    # Paths to input/output images.
+def parse_arguments():
+    """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='YOLOv1 implementation using PyTorch')
     parser.add_argument('--weight', default='weights/best.pth', help='Model path')
-    parser.add_argument('--in_path', default='data/extracted_frames/Movie_1_frame_000005s.jpg', help='Input image path')
+    parser.add_argument('--in_path', default='data/train/Movie_1_frame_000045s_jpg.rf.2991775f3f0b9901244fce6514ce133b.jpg', help='Input image path')
     parser.add_argument('--out_path', default='result.jpg', help='Output image path')
+    parser.add_argument('--conf_thresh', type=float, default=0.1, help='Confidence threshold')
+    parser.add_argument('--prob_thresh', type=float, default=0.1, help='Probability threshold')
+    parser.add_argument('--nms_thresh', type=float, default=0.35, help='NMS threshold')
+    parser.add_argument('--use_cuda', action='store_true', help='Use CUDA if available')
+    
+    return parser.parse_args()
 
-    args = parser.parse_args()
-    # GPU device on which yolo is loaded.
-    gpu_id = 0
 
-    # Load model.
-    yolo = YOLODetector(args.weight, conf_thresh=0.6, prob_thresh=0.6, nms_thresh=0.35)
+if __name__ == '__main__':
+    # Parse command line arguments
+    args = parse_arguments()
 
-    # Load image.
+    # Load model
+    yolo = YOLODetector(
+        args.weight, 
+        conf_thresh=args.conf_thresh, 
+        prob_thresh=args.prob_thresh, 
+        nms_thresh=args.nms_thresh,
+        use_cuda=args.use_cuda
+    )
+
+    # Check if input file exists
+    if not os.path.isfile(args.in_path):
+        print(f"Error: Input file '{args.in_path}' does not exist.")
+        exit(1)
+        
+    # Load image
     image = cv2.imread(args.in_path)
+    if image is None:
+        print(f"Error: Could not read image '{args.in_path}'.")
+        exit(1)
 
-    # Detect objects.
+    # Detect objects
     boxes, class_names, probs = yolo.detect(image)
 
-    # Visualize.
+    print(boxes, class_names, probs)
+
+    # Visualize
     image_boxes = visualize_boxes(image, boxes, class_names, probs)
 
-    # Output detection result as an image.
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(args.out_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    # Output detection result as an image
     cv2.imwrite(args.out_path, image_boxes)
+    print(f"Detection result saved to '{args.out_path}'")

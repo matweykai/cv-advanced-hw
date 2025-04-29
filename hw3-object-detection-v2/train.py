@@ -123,6 +123,7 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
                     del data, labels
             test_losses = np.append(test_losses, [[epoch], [test_loss]], axis=1)
             writer.add_scalar('Loss/test', test_loss, epoch)
+            print(test_loss)
             save_metrics()
     save_metrics()
     torch.save(model.state_dict(), os.path.join(weight_dir, 'final'))

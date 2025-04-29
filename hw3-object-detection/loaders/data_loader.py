@@ -7,11 +7,11 @@ import numpy as np
 import cv2
 import xml.etree.ElementTree as ET
 import os
-
+import config
 
 class VOCDataset(Dataset):
 
-    def __init__(self, is_train, file_names, base_dir, image_size=448, grid_size=7, num_bboxes=2, num_classes=20):
+    def __init__(self, is_train, file_names, base_dir, image_size=448, grid_size=7, num_bboxes=2, num_classes=config.C):
         self.is_train = is_train
         self.image_size = image_size
 
@@ -19,7 +19,7 @@ class VOCDataset(Dataset):
         self.B = num_bboxes
         self.C = num_classes
 
-        mean = [122.67891434, 116.66876762, 104.00698793]
+        mean = [74.8052, 76.4244, 74.4321]
         self.mean = np.array(mean, dtype=np.float32)
 
         self.to_tensor = transforms.ToTensor()
@@ -56,7 +56,6 @@ class VOCDataset(Dataset):
                     self.boxes.append(torch.Tensor(box))
                     self.labels.append(torch.LongTensor(label))
                     self.paths.append(image_path)
-
 
         self.num_samples = len(self.paths)
 
@@ -96,7 +95,7 @@ class VOCDataset(Dataset):
 
         img = cv2.resize(img, dsize=(self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # assuming the model is pretrained with RGB images.
-        # img = (img - self.mean) / 255.0  # normalize from -1.0 to 1.0.
+        img = (img - self.mean) / 255.0  # normalize from -1.0 to 1.0.
         img = np.ascontiguousarray(img, dtype=np.float32)
         img /= 255.0
         img = self.to_tensor(img)
@@ -312,7 +311,60 @@ def test():
     for i in range(100):
         img, target = next(data_iter)
         print(img.size(), target.size())
-
+def calculate_mean_std():
+    """
+    Calculate the mean and standard deviation of the dataset images.
+    
+    Returns:
+        mean: Tensor of mean values for each channel
+        std: Tensor of standard deviation values for each channel
+    """
+    import numpy as np
+    import cv2
+    from tqdm import tqdm
+    import os
+    
+    # Get train file names
+    base_dir = 'data'
+    train_names = [f.rsplit('.jpg', 1)[0] for f in os.listdir(base_dir + '/train') if f.endswith('.jpg')]
+    
+    # Initialize variables to store sum and sum of squares
+    sum_rgb = np.zeros(3, dtype=np.float64)  # Use float64 to prevent overflow
+    sum_rgb_squared = np.zeros(3, dtype=np.float64)
+    pixel_count = 0
+    
+    print("Calculating dataset mean and std...")
+    for name in tqdm(train_names):
+        # Load image
+        img_path = f"{base_dir}/train/{name}.jpg"
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+        
+        # Convert to float64 to prevent overflow during squaring
+        img = img.astype(np.float64)
+        
+        # Update sums
+        sum_rgb += np.sum(img, axis=(0, 1))
+        sum_rgb_squared += np.sum(np.square(img), axis=(0, 1))
+        pixel_count += img.shape[0] * img.shape[1]
+    
+    # Calculate mean and std
+    mean = sum_rgb / pixel_count
+    # Use a more numerically stable method to calculate standard deviation
+    var = (sum_rgb_squared / pixel_count) - (mean ** 2)
+    # Ensure variance is non-negative due to potential floating-point errors
+    var = np.maximum(var, 0)
+    std = np.sqrt(var)
+    
+    # Convert to PyTorch tensors and normalize to [0, 1]
+    mean_tensor = torch.FloatTensor(mean)
+    std_tensor = torch.FloatTensor(std)
+    
+    print(f"Dataset mean: {mean_tensor}")
+    print(f"Dataset std: {std_tensor}")
+    
+    return mean_tensor, std_tensor
 
 if __name__ == '__main__':
-    test()
+    # test()
+    calculate_mean_std()

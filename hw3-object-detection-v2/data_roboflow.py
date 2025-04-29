@@ -162,7 +162,7 @@ class YoloRoboflowDataset(Dataset):
         if self.normalize:
             # Ensure data is float before normalizing
             data = data.float() if data.dtype != torch.float32 else data
-            normalizer = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            normalizer = T.Normalize(mean=[0.2934, 0.2997, 0.2919], std=[0.2473, 0.2431, 0.2438])
             data = normalizer(data)
 
 

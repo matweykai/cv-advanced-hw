@@ -1148,6 +1148,7 @@ dependencies = [
     { name = "pillow" },
     { name = "scikit-learn" },
     { name = "tensorboard" },
+    { name = "torch" },
     { name = "wandb" },
 ]
 
@@ -1169,6 +1170,7 @@ requires-dist = [
     { name = "pillow" },
     { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "tensorboard", specifier = ">=2.19.0" },
+    { name = "torch", specifier = ">=2.6.0" },
     { name = "wandb", specifier = ">=0.19.10" },
 ]
 

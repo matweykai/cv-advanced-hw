@@ -93,7 +93,7 @@ def tracker_strong(el):
             det_box_ind_to_data.append(temp_ind)
             det_boxes.append(temp_data['bounding_box'])
     
-    track_ids = soft_tracker.track(det_boxes)
+    track_ids = strong_tracker.track(det_boxes)
 
     for data_ind, temp_track_id in zip(det_box_ind_to_data, track_ids):
         el['data'][data_ind]['track_id'] = temp_track_id

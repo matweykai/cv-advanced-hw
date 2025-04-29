@@ -113,191 +113,108 @@ class YoloRoboflowDataset(Dataset):
         # Define transforms here
         self.transform = T.Compose([
             T.ToTensor(),
-            T.Resize(config.IMAGE_SIZE, antialias=True) # Added antialias
+            T.Resize(config.IMAGE_SIZE) # Added antialias
         ])
 
 
     def __getitem__(self, i):
         img_path, ann_path = self.file_pairs[i]
 
-        # Load image
-        try:
-            image = Image.open(img_path).convert('RGB')
-        except Exception as e:
-             print(f"Error loading image {img_path}: {e}")
-             # Return dummy data or raise error
-             return torch.zeros((3, *config.IMAGE_SIZE)), torch.zeros((config.S, config.S, 5 * config.B + config.C)), torch.zeros((3, *config.IMAGE_SIZE))
+        image = Image.open(img_path).convert('RGB')
 
-
-        # Load annotation
-        try:
-            label = parse_voc_xml(ann_path)
-        except ET.ParseError:
-            print(f"Warning: Could not parse XML file {ann_path}. Returning empty label.")
-            label = {'annotation': {'object': []}} # Provide dummy structure
-        except Exception as e:
-             print(f"Warning: Error processing annotation {ann_path}: {e}. Returning empty label.")
-             label = {'annotation': {'object': []}} # Provide dummy structure
-
+        label = parse_voc_xml(ann_path)
 
         # Apply initial transforms
         data = self.transform(image)
         original_data = data.clone() # Clone before augmentations
 
-        x_shift = 0
-        y_shift = 0
-        scale = 1.0
+        x_shift = int((0.2 * random.random() - 0.1) * config.IMAGE_SIZE[0])
+        y_shift = int((0.2 * random.random() - 0.1) * config.IMAGE_SIZE[1])
+        scale = 1 + 0.2 * random.random()
         # Augment images
         if self.augment:
-            x_shift = int((0.2 * random.random() - 0.1) * config.IMAGE_SIZE[0])
-            y_shift = int((0.2 * random.random() - 0.1) * config.IMAGE_SIZE[1])
-            scale = 1 + 0.2 * random.random()
             data = TF.affine(data, angle=0.0, scale=scale, translate=(x_shift, y_shift), shear=0.0)
-            # Add Color Jitter for more robust augmentation
-            color_jitter = T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
-            data = color_jitter(data)
-            # Removed individual hue/saturation adjustments, replaced by ColorJitter
-
+            data = TF.adjust_hue(data, 0.2 * random.random() - 0.1)
+            data = TF.adjust_saturation(data, 0.2 * random.random() + 0.9)
         # Normalize image
         if self.normalize:
-            # Ensure data is float before normalizing
-            data = data.float() if data.dtype != torch.float32 else data
-            normalizer = T.Normalize(mean=[0.2934, 0.2997, 0.2919], std=[0.2473, 0.2431, 0.2438])
-            data = normalizer(data)
-
+            data = TF.normalize(data, mean=[0.2934, 0.2997, 0.2919], std=[0.2473, 0.2431, 0.2438])
 
         # Calculate grid cell size (using config.IMAGE_SIZE directly is more robust)
         grid_size_x = config.IMAGE_SIZE[0] / config.S
         grid_size_y = config.IMAGE_SIZE[1] / config.S
 
         # Process bounding boxes into the SxSx(5*B+C) ground truth tensor
+     # Process bounding boxes into the SxSx(5*B+C) ground truth tensor
         boxes = {}
         class_names = {}                    # Track what class each grid cell has been assigned to
-        
-        # Use the potentially updated config.C
-        local_C = len(self.classes) if len(self.classes) > 0 else config.C
-        depth = 5 * config.B + local_C     # 5 numbers per bbox, then one-hot encoding of label
+        depth = 5 * config.B + config.C     # 5 numbers per bbox, then one-hot encoding of label
         ground_truth = torch.zeros((config.S, config.S, depth))
-
-        # Use utils.get_bounding_boxes which expects the parsed dict
-        bounding_boxes = utils.get_bounding_boxes(label)
-
-        for j, bbox_pair in enumerate(bounding_boxes):
+        for j, bbox_pair in enumerate(utils.get_bounding_boxes(label)):
             name, coords = bbox_pair
-            if name not in self.classes:
-                # This case should ideally not happen if class dict is generated correctly
-                print(f"Warning: Class '{name}' found in {ann_path} but not in generated class dict. Skipping box.")
-                continue
-
+            assert name in self.classes, f"Unrecognized class '{name}'"
             class_index = self.classes[name]
-            x_min, x_max, y_min, y_max = coords # These are already scaled by get_bounding_boxes
+            x_min, x_max, y_min, y_max = coords
 
-            # Augment labels (applies shift/scale from image augmentation)
+            # Augment labels
             if self.augment:
                 half_width = config.IMAGE_SIZE[0] / 2
                 half_height = config.IMAGE_SIZE[1] / 2
-                # Apply the same shift/scale used for the image
                 x_min = utils.scale_bbox_coord(x_min, half_width, scale) + x_shift
                 x_max = utils.scale_bbox_coord(x_max, half_width, scale) + x_shift
                 y_min = utils.scale_bbox_coord(y_min, half_height, scale) + y_shift
                 y_max = utils.scale_bbox_coord(y_max, half_height, scale) + y_shift
 
-                # Clamp coordinates to be within image bounds after augmentation
-                x_min = max(0, x_min)
-                y_min = max(0, y_min)
-                x_max = min(config.IMAGE_SIZE[0] - 1, x_max)
-                y_max = min(config.IMAGE_SIZE[1] - 1, y_max)
-
-
             # Calculate the position of center of bounding box
             mid_x = (x_max + x_min) / 2
             mid_y = (y_max + y_min) / 2
-
-            # Check if bounding box is valid after augmentation
-            if x_max <= x_min or y_max <= y_min:
-                 continue # Skip invalid boxes
-
             col = int(mid_x // grid_size_x)
             row = int(mid_y // grid_size_y)
 
-            # Ensure row/col are within grid bounds
             if 0 <= col < config.S and 0 <= row < config.S:
                 cell = (row, col)
                 if cell not in class_names or name == class_names[cell]:
                     # Insert class one-hot encoding into ground truth
-                    one_hot = torch.zeros(local_C)
+                    one_hot = torch.zeros(config.C)
                     one_hot[class_index] = 1.0
-                    ground_truth[row, col, :local_C] = one_hot
+                    ground_truth[row, col, :config.C] = one_hot
                     class_names[cell] = name
 
                     # Insert bounding box into ground truth tensor
                     bbox_index = boxes.get(cell, 0)
                     if bbox_index < config.B:
-                        # Calculate relative coordinates and dimensions
-                        # Ensure grid_size is not zero
-                        rel_x = (mid_x - col * grid_size_x) / grid_size_x if grid_size_x > 0 else 0
-                        rel_y = (mid_y - row * grid_size_y) / grid_size_y if grid_size_y > 0 else 0
-                        width = (x_max - x_min) / config.IMAGE_SIZE[0]
-                        height = (y_max - y_min) / config.IMAGE_SIZE[1]
-
-                        # Clamp relative coords and dimensions to [0, 1]
-                        rel_x = max(0.0, min(1.0, rel_x))
-                        rel_y = max(0.0, min(1.0, rel_y))
-                        width = max(0.0, min(1.0, width))
-                        height = max(0.0, min(1.0, height))
-
-
                         bbox_truth = (
-                            rel_x,     # X coord relative to grid square [0, 1]
-                            rel_y,     # Y coord relative to grid square [0, 1]
-                            width,     # Width relative to image size [0, 1]
-                            height,    # Height relative to image size [0, 1]
-                            1.0        # Confidence (objectness score)
+                            (mid_x - col * grid_size_x) / config.IMAGE_SIZE[0],     # X coord relative to grid square
+                            (mid_y - row * grid_size_y) / config.IMAGE_SIZE[1],     # Y coord relative to grid square
+                            (x_max - x_min) / config.IMAGE_SIZE[0],                 # Width
+                            (y_max - y_min) / config.IMAGE_SIZE[1],                 # Height
+                            1.0                                                     # Confidence
                         )
 
                         # Fill all bbox slots with current bbox (starting from current bbox slot, avoid overriding prev)
-                        bbox_start = 5 * bbox_index + local_C
-                        # Ensure slice does not exceed tensor bounds
-                        if bbox_start < ground_truth.shape[2]:
-                            ground_truth[row, col, bbox_start:] = torch.tensor(bbox_truth).repeat(config.B - bbox_index)
+                        # This prevents having "dead" boxes (zeros) at the end, which messes up IOU loss calculations
+                        bbox_start = 5 * bbox_index + config.C
+                        ground_truth[row, col, bbox_start:] = torch.tensor(bbox_truth).repeat(config.B - bbox_index)
                         boxes[cell] = bbox_index + 1
-            # else: # Optional: Log boxes falling outside grid
-            #     print(f"Warning: Box center ({mid_x:.1f}, {mid_y:.1f}) falls outside grid {config.S}x{config.S} for image {img_path}")
-
 
         return data, ground_truth, original_data
 
     def __len__(self):
-        return len(self.file_pairs) # Use the length of file pairs
+        return len(self.file_pairs)
 
 
 if __name__ == '__main__':
     # Display data
-    print("Loading class array...")
     obj_classes = utils.load_class_array()
-    if not obj_classes:
-         print("Class array is empty. Running dataset init to generate classes...")
-         # Initialize dataset once to generate class file if needed
-         temp_train_set = YoloRoboflowDataset('train', normalize=False, augment=False)
-         obj_classes = utils.load_class_array() # Try loading again
-         if not obj_classes:
-              print("Failed to load/generate classes. Exiting.")
-              exit()
-         else:
-              print(f"Generated/Loaded {len(obj_classes)} classes: {obj_classes}")
-
-
-    print("Initializing train dataset...")
     train_set = YoloRoboflowDataset('train', normalize=True, augment=True)
-    print(f"Train set size: {len(train_set)}")
 
-    # Basic check on the first item
-    if len(train_set) > 0:
-        print("Checking first item from train set...")
-        data, label, orig_data = train_set[0]
-        print(f"Data shape: {data.shape}, Label shape: {label.shape}, Original data shape: {orig_data.shape}")
-        print(f"Label non-zero elements: {torch.sum(label != 0)}")
-        # Add more checks if needed, e.g., min/max values
-        print(f"Data min: {torch.min(data)}, max: {torch.max(data)}")
-    else:
-        print("Train set is empty. Check data directory and file matching logic.")
+    negative_labels = 0
+    smallest = 0
+    largest = 0
+    for data, label, _ in train_set:
+        negative_labels += torch.sum(label < 0).item()
+        smallest = min(smallest, torch.min(data).item())
+        largest = max(largest, torch.max(data).item())
+        utils.plot_boxes(data, label, obj_classes, max_overlap=float('inf'))
+    # print('num_negatives', negative_labels)
+    # print('dist', smallest, largest)

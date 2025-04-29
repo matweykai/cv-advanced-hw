@@ -1,12 +1,10 @@
 import os
-import torchvision.transforms as T
-
 
 DATA_PATH = 'data'
 CLASSES_PATH = os.path.join(DATA_PATH, 'classes.json')
 
 BATCH_SIZE = 64
-EPOCHS = 135
+EPOCHS = 10
 WARMUP_EPOCHS = 0
 LEARNING_RATE = 1E-4
 

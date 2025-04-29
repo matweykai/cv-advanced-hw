@@ -26,20 +26,10 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
         momentum=0.9,
         weight_decay=5E-4
     )
-    # optimizer = torch.optim.Adam(
-    #     model.parameters(),
-    #     lr=config.LEARNING_RATE
-    # )
-
-    # Learning rate scheduler (NOT NEEDED)
-    # scheduler = torch.optim.lr_scheduler.LambdaLR(
-    #     optimizer,
-    #     lr_lambda=utils.scheduler_lambda
-    # )
 
     # Load the dataset
     train_set = YoloRoboflowDataset('train', normalize=True, augment=True)
-    test_set = YoloRoboflowDataset('valid', normalize=True, augment=True)
+    test_set = YoloRoboflowDataset('valid', normalize=True, augment=False)
 
     train_loader = DataLoader(
         train_set,
@@ -55,6 +45,19 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
         num_workers=8,
         persistent_workers=True,
         drop_last=True
+    )
+
+    # Print dataset information
+    print(f"Training dataset: {len(train_set)} images")
+    print(f"Training batches: {len(train_loader)} batches of size {config.BATCH_SIZE}")
+    print(f"Validation dataset: {len(test_set)} images")
+    print(f"Validation batches: {len(test_loader)} batches of size {config.BATCH_SIZE}")
+    
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda epoch: 1.0 if epoch < config.WARMUP_EPOCHS else 
+                               0.1 if epoch < config.WARMUP_EPOCHS + 30 else 0.01
     )
 
     # Create folders
@@ -80,7 +83,6 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
         np.save(os.path.join(root, 'test_losses'), test_losses)
         np.save(os.path.join(root, 'train_errors'), train_errors)
         np.save(os.path.join(root, 'test_errors'), test_errors)
-
 
     #####################
     #       Train       #
@@ -123,7 +125,7 @@ if __name__ == '__main__':      # Prevent recursive subprocess creation
                     del data, labels
             test_losses = np.append(test_losses, [[epoch], [test_loss]], axis=1)
             writer.add_scalar('Loss/test', test_loss, epoch)
-            print(test_loss)
+            print("test_loss", test_loss)
             save_metrics()
     save_metrics()
     torch.save(model.state_dict(), os.path.join(weight_dir, 'final'))

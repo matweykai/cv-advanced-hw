@@ -68,6 +68,7 @@ class YOLOv1(nn.Module):
             nn.Dropout(0.5),
             nn.LeakyReLU(negative_slope=0.1),
             nn.Linear(4096, config.S * config.S * self.depth),                      # Linear 2
+            # nn.Sigmoid()
         ]
 
         self.model = nn.Sequential(*layers)

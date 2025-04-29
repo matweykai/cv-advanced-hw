@@ -24,10 +24,17 @@ if __name__ == '__main__':
     model = YOLOv1().to(device)
     loss_function = SumSquaredErrorLoss()
 
-    # Adam works better
-    optimizer = torch.optim.Adam(
+    # # Adam works better
+    # optimizer = torch.optim.Adam(
+    #     model.parameters(),
+    #     lr=config.LEARNING_RATE,
+    #     weight_decay=5E-4
+    # )
+
+    optimizer = torch.optim.SGD(
         model.parameters(),
         lr=config.LEARNING_RATE,
+        momentum=0.9,
         weight_decay=5E-4
     )
 

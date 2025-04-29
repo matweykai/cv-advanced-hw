@@ -3,6 +3,7 @@ import json
 import os
 import config
 import matplotlib.patches as patches
+import torchvision
 import torchvision.transforms as T
 from PIL import ImageDraw, ImageFont
 from matplotlib import pyplot as plt
@@ -168,6 +169,37 @@ def get_overlap(a, b):
     ).item()
 
 
+def non_max_suppression(boxes_xywh, scores, iou_threshold):
+    """
+    Performs Non-Maximum Suppression (NMS) on bounding boxes using torchvision.
+
+    Args:
+        boxes_xywh (torch.Tensor): Bounding boxes in [x_center, y_center, width, height] format. Shape: (N, 4).
+        scores (torch.Tensor): Confidence scores for each box. Shape: (N,).
+        iou_threshold (float): IoU threshold for suppression.
+
+    Returns:
+        torch.Tensor: Indices of the boxes to keep. Shape: (K,).
+    """
+    if boxes_xywh.numel() == 0:
+        return torch.empty((0,), dtype=torch.int64, device=boxes_xywh.device)
+
+    # Convert [xc, yc, w, h] to [x1, y1, x2, y2]
+    x_center, y_center, widths, heights = boxes_xywh.unbind(dim=1)
+    x1 = x_center - widths / 2
+    y1 = y_center - heights / 2
+    x2 = x_center + widths / 2
+    y2 = y_center + heights / 2
+    boxes_xyxy = torch.stack((x1, y1, x2, y2), dim=1)
+
+    # Ensure tensors are on the same device if not already
+    # boxes_xyxy = boxes_xyxy.to(device)
+    # scores = scores.to(device)
+
+    keep_indices = torchvision.ops.nms(boxes_xyxy, scores, iou_threshold)
+    return keep_indices
+
+
 def plot_boxes(data, labels, classes, color='orange', min_confidence=0.2, max_overlap=0.5, file=None):
     """Plots bounding boxes on the given image."""
 
@@ -197,26 +229,59 @@ def plot_boxes(data, labels, classes, color='orange', min_confidence=0.2, max_ov
     # Sort by highest to lowest confidence
     bboxes = sorted(bboxes, key=lambda x: x[3], reverse=True)
 
-    # Calculate IOUs between each pair of boxes
-    num_boxes = len(bboxes)
-    iou = [[0 for _ in range(num_boxes)] for _ in range(num_boxes)]
-    for i in range(num_boxes):
-        for j in range(num_boxes):
-            iou[i][j] = get_overlap(bboxes[i], bboxes[j])
-
     # Non-maximum suppression and render image
     image = T.ToPILImage()(data)
     draw = ImageDraw.Draw(image)
-    discarded = set()
-    for i in range(num_boxes):
-        if i not in discarded:
-            tl, width, height, confidence, class_index = bboxes[i]
+    keep_indices_all_classes = set()
+    bboxes_by_class = defaultdict(list)
+    indices_by_class = defaultdict(list)
 
-            # Decrease confidence of other conflicting bboxes
-            for j in range(num_boxes):
-                other_class = bboxes[j][4]
-                if j != i and other_class == class_index and iou[i][j] > max_overlap:
-                    discarded.add(j)
+    # Group boxes by class index and store original index
+    for idx, box_data in enumerate(bboxes):
+        class_idx = box_data[4]
+        bboxes_by_class[class_idx].append(box_data)
+        indices_by_class[class_idx].append(idx)
+
+    # Apply NMS for each class separately
+    for class_idx, class_boxes_data in bboxes_by_class.items():
+        if not class_boxes_data:
+            continue
+
+        # Prepare tensors for NMS function
+        # Convert [[tl, w, h, conf, cls], ...] to tensors
+        # Box format needs conversion: [tl_x, tl_y, w, h] -> [center_x, center_y, w, h]
+        # Assuming tl coords are relative to image top-left (0,0) and w,h are relative widths/heights
+        # Let's assume the coordinates were already scaled to image size in pixels earlier
+        boxes_for_nms = []
+        scores_for_nms = []
+        original_indices_for_class = indices_by_class[class_idx]
+
+        for box_data in class_boxes_data:
+            tl, width, height, confidence, _ = box_data
+            # Convert tl, w, h (pixels) to xc, yc, w, h (pixels)
+            xc = tl[0] + width / 2
+            yc = tl[1] + height / 2
+            boxes_for_nms.append([xc, yc, width, height])
+            scores_for_nms.append(confidence)
+
+        if not boxes_for_nms:
+            continue
+
+        boxes_tensor = torch.tensor(boxes_for_nms, dtype=torch.float32, device=device)
+        scores_tensor = torch.tensor(scores_for_nms, dtype=torch.float32, device=device)
+
+        # Apply NMS using the new function
+        keep_local_indices = non_max_suppression(boxes_tensor, scores_tensor, max_overlap) # Use max_overlap from plot_boxes args
+
+        # Map local kept indices back to original indices from the initial bboxes list
+        for local_idx in keep_local_indices:
+            original_idx = original_indices_for_class[local_idx.item()]
+            keep_indices_all_classes.add(original_idx)
+
+    # Draw only the kept boxes
+    for i in range(len(bboxes)):
+        if i in keep_indices_all_classes:
+            tl, width, height, confidence, class_index = bboxes[i]
 
             # Annotate image
             draw.rectangle((tl, (tl[0] + width, tl[1] + height)), outline='orange')

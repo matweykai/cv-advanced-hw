@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 import numpy as np
 from collections import defaultdict
-from utils import get_iou, bbox_attr
+from utils import get_iou, bbox_attr, non_max_suppression
 import config
 
 
@@ -166,6 +166,40 @@ def calculate_mAP(model, dataloader, num_classes, iou_threshold=0.5, confidence_
     # Filter detections based on the confidence threshold
     # This should happen *after* collecting all detections
     all_detections = [d for d in all_detections if d['confidence'] >= confidence_threshold]
+
+    # --- Apply Non-Max Suppression (NMS) per image, per class ---
+    print("Applying Non-Max Suppression...")
+    detections_after_nms = []
+    # Group detections by image index
+    detections_by_image = defaultdict(list)
+    for det in all_detections:
+        detections_by_image[det['image_idx']].append(det)
+
+    for img_idx, img_detections in tqdm(detections_by_image.items(), desc="NMS per image"):
+        # Group detections in this image by class index
+        detections_by_class = defaultdict(list)
+        for det in img_detections:
+            detections_by_class[det['class_idx']].append(det)
+
+        # Apply NMS for each class in this image
+        for class_idx, class_dets in detections_by_class.items():
+            if not class_dets:
+                continue
+
+            # Extract boxes ([xc, yc, w, h] format, relative) and scores
+            boxes = torch.tensor([d['bbox'] for d in class_dets], dtype=torch.float32, device=utils.device)
+            scores = torch.tensor([d['confidence'] for d in class_dets], dtype=torch.float32, device=utils.device)
+
+            # Perform NMS
+            keep_indices = non_max_suppression(boxes, scores, iou_threshold) # Use the main iou_threshold
+
+            # Keep only the detections that survived NMS
+            for idx in keep_indices:
+                detections_after_nms.append(class_dets[idx.item()])
+
+    print(f"Detections after NMS: {len(detections_after_nms)}")
+    all_detections = detections_after_nms # Use NMS results for AP calculation
+    # --- End NMS ---
 
     # --- mAP Calculation ---
 

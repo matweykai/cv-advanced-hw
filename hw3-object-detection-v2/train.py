@@ -24,13 +24,6 @@ if __name__ == '__main__':
     model = YOLOv1().to(device)
     loss_function = SumSquaredErrorLoss()
 
-    # # Adam works better
-    # optimizer = torch.optim.Adam(
-    #     model.parameters(),
-    #     lr=config.LEARNING_RATE,
-    #     weight_decay=5E-4
-    # )
-
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=config.LEARNING_RATE,
@@ -64,12 +57,12 @@ if __name__ == '__main__':
     print(f"Validation dataset: {len(test_set)} images")
     print(f"Validation batches: {len(test_loader)} batches of size {config.BATCH_SIZE}")
     
-    # Learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lr_lambda=lambda epoch: 1.0 if epoch < config.WARMUP_EPOCHS else 
-                               0.1 if epoch < config.WARMUP_EPOCHS + 30 else 0.01
-    )
+    # # Learning rate scheduler
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(
+    #     optimizer,
+    #     lr_lambda=lambda epoch: 1.0 if epoch < config.WARMUP_EPOCHS else 
+    #                            0.1 if epoch < config.WARMUP_EPOCHS + 30 else 0.01
+    # )
 
     # Create folders
     root = os.path.join(
@@ -127,9 +120,9 @@ if __name__ == '__main__':
             wandb.log({"train_loss": loss.item()})
             del data, labels
 
-        # Step and graph scheduler once an epoch
-        writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], epoch)
-        scheduler.step()
+        # # Step and graph scheduler once an epoch
+        # writer.add_scalar('Learning Rate', scheduler.get_last_lr()[0], epoch)
+        # scheduler.step()
 
         train_losses = np.append(train_losses, [[epoch], [train_loss]], axis=1)
         writer.add_scalar('Loss/train', train_loss, epoch)

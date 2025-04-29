@@ -4,7 +4,7 @@ DATA_PATH = 'data'
 CLASSES_PATH = os.path.join(DATA_PATH, 'classes.json')
 
 BATCH_SIZE = 64
-EPOCHS = 3
+EPOCHS = 30
 WARMUP_EPOCHS = 0
 LEARNING_RATE = 1E-3
 

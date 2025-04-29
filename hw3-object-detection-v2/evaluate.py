@@ -125,7 +125,7 @@ def extract_batch_data(predictions, ground_truths, batch_size, image_indices):
     return batch_detections, batch_ground_truths
 
 
-def calculate_mAP(model, dataloader, num_classes, iou_threshold=0.5, confidence_threshold=0.01):
+def calculate_mAP(model, dataloader, num_classes, iou_threshold=0.5, confidence_threshold=0.1):
     """
     Calculate mean Average Precision (mAP) for the model on the given dataset
     using standard PASCAL VOC methodology (AUC with interpolation).
@@ -322,7 +322,7 @@ def main():
     parser.add_argument('--weights', type=str, default='final', help='Name of weights file to use (e.g., final.pt)')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for evaluation')
     parser.add_argument('--iou_threshold', type=float, default=0.5, help='IoU threshold for mAP calculation (usually 0.5 for PASCAL VOC)')
-    parser.add_argument('--confidence_threshold', type=float, default=0.01, help='Confidence threshold for considering detections')
+    parser.add_argument('--confidence_threshold', type=float, default=0.1, help='Confidence threshold for considering detections')
     args = parser.parse_args()
 
     # Set model directory if not provided

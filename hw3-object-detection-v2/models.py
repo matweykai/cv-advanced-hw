@@ -74,7 +74,17 @@ class YOLOv1(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        return torch.reshape(
+        predictions = torch.reshape(
             self.model.forward(x),
             (x.size(dim=0), config.S, config.S, self.depth)
         )
+
+        # Apply sigmoid ONLY to confidence scores
+        # Confidence score is the 5th element (index 4) in each bbox prediction
+        for b in range(config.B):
+            confidence_index = config.C + 4 + 5 * b
+            predictions[..., confidence_index] = torch.sigmoid(predictions[..., confidence_index])
+        
+        # Class scores Pr(Class|Object) remain linear outputs
+
+        return predictions

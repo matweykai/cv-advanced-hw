@@ -10,6 +10,7 @@ from loss import SumSquaredErrorLoss
 from models import YOLOv1
 import config
 from utils import device
+
 import wandb
 
 
@@ -32,7 +33,7 @@ if __name__ == '__main__':
     )
 
     # Load the dataset
-    train_set = YoloRoboflowDataset('train', normalize=True, augment=True)
+    train_set = YoloRoboflowDataset('train', normalize=True, augment=False)
     test_set = YoloRoboflowDataset('valid', normalize=True, augment=False)
 
     train_loader = DataLoader(

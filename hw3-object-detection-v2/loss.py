@@ -9,7 +9,7 @@ class SumSquaredErrorLoss(nn.Module):
     def __init__(self):
         super().__init__()
         self.l_coord = 5
-        self.l_noobj = 0.001
+        self.l_noobj = 0.5
 
     def forward(self, p, a):
         # Calculate IOU of each predicted bbox against the ground truth bbox

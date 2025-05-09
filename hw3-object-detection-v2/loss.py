@@ -11,14 +11,14 @@ class SumSquaredErrorLoss(nn.Module):
         self.l_coord = 5
         self.l_noobj = 0.5
 
-    def forward(self, p, a):
+    def forward(self, predictions, target):
         # Calculate IOU of each predicted bbox against the ground truth bbox
-        iou = get_iou(p, a)                     # (batch, S, S, B, B)
+        iou = get_iou(predictions, target)                     # (batch, S, S, B, B)
         max_iou = torch.max(iou, dim=-1)[0]     # (batch, S, S, B)
 
         # Get masks
-        bbox_mask = bbox_attr(a, 4) > 0.0
-        p_template = bbox_attr(p, 4) > 0.0
+        bbox_mask = bbox_attr(target, 4) > 0.0
+        p_template = bbox_attr(predictions, 4) > 0.0
         obj_i = bbox_mask[..., 0:1]         # 1 if grid I has any object at all
         responsible = torch.zeros_like(p_template).scatter_(       # (batch, S, S, B)
             -1,
@@ -30,25 +30,25 @@ class SumSquaredErrorLoss(nn.Module):
 
         # XY position losses
         x_losses = mse_loss(
-            obj_ij * bbox_attr(p, 0),
-            obj_ij * bbox_attr(a, 0)
+            obj_ij * bbox_attr(predictions, 0),
+            obj_ij * bbox_attr(target, 0)
         )
         y_losses = mse_loss(
-            obj_ij * bbox_attr(p, 1),
-            obj_ij * bbox_attr(a, 1)
+            obj_ij * bbox_attr(predictions, 1),
+            obj_ij * bbox_attr(target, 1)
         )
         pos_losses = x_losses + y_losses
         # print('pos_losses', pos_losses.item())
 
         # Bbox dimension losses
-        p_width = bbox_attr(p, 2)
-        a_width = bbox_attr(a, 2)
+        p_width = bbox_attr(predictions, 2)
+        a_width = bbox_attr(target, 2)
         width_losses = mse_loss(
             obj_ij * torch.sign(p_width) * torch.sqrt(torch.abs(p_width) + config.EPSILON),
             obj_ij * torch.sqrt(a_width)
         )
-        p_height = bbox_attr(p, 3)
-        a_height = bbox_attr(a, 3)
+        p_height = bbox_attr(predictions, 3)
+        a_height = bbox_attr(target, 3)
         height_losses = mse_loss(
             obj_ij * torch.sign(p_height) * torch.sqrt(torch.abs(p_height) + config.EPSILON),
             obj_ij * torch.sqrt(a_height)
@@ -58,20 +58,20 @@ class SumSquaredErrorLoss(nn.Module):
 
         # Confidence losses (target confidence is IOU)
         obj_confidence_losses = mse_loss(
-            obj_ij * bbox_attr(p, 4),
-            obj_ij * max_iou  # Use max_iou as target for responsible predictors
+            obj_ij * bbox_attr(predictions, 4),
+            obj_ij * torch.ones_like(max_iou)  # Use max_iou as target for responsible predictors
         )
         # print('obj_confidence_losses', obj_confidence_losses.item())
         noobj_confidence_losses = mse_loss(
-            noobj_ij * bbox_attr(p, 4),
+            noobj_ij * bbox_attr(predictions, 4),
             torch.zeros_like(max_iou)
         )
         # print('noobj_confidence_losses', noobj_confidence_losses.item())
 
         # Classification losses
         class_losses = mse_loss(
-            obj_i * p[..., :config.C],
-            obj_i * a[..., :config.C]
+            obj_i * predictions[..., :config.C],
+            obj_i * target[..., :config.C]
         )
         # print('class_losses', class_losses.item())
 

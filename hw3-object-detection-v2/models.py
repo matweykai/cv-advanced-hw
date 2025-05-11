@@ -68,7 +68,6 @@ class YOLOv1(nn.Module):
             nn.Dropout(0.5),
             nn.LeakyReLU(negative_slope=0.1),
             nn.Linear(4096, config.S * config.S * self.depth),                      # Linear 2
-            # nn.Sigmoid()
         ]
 
         self.model = nn.Sequential(*layers)
@@ -78,13 +77,4 @@ class YOLOv1(nn.Module):
             self.model.forward(x),
             (x.size(dim=0), config.S, config.S, self.depth)
         )
-
-        # Apply sigmoid ONLY to confidence scores
-        # Confidence score is the 5th element (index 4) in each bbox prediction
-        for b in range(config.B):
-            confidence_index = config.C + 4 + 5 * b
-            predictions[..., confidence_index] = torch.sigmoid(predictions[..., confidence_index])
-        
-        # Class scores Pr(Class|Object) remain linear outputs
-
         return predictions

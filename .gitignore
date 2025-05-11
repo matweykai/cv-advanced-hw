@@ -7,3 +7,5 @@ logs/
 wandb/
 checkpoints/
 evaluation/
+
+.venv

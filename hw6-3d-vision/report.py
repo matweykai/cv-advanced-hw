@@ -31,7 +31,7 @@ import cv2
 model = YOLOWorld(model_id='yolo_world/v2-x') 
 
 # %%
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 
 sample_info = nusc.get('sample', sample_token)
 
@@ -90,11 +90,11 @@ image, results = detect_objects_in_camera_image(
 
 annotated_image, detections = display_detections(results, image)
 
-plt.figure(figsize=(12, 8))
-plt.imshow(annotated_image)
-plt.axis('off')
-plt.title(f'Object Detection on {camera_channel}')
-plt.show()
+# plt.figure(figsize=(12, 8))
+# plt.imshow(annotated_image)
+# plt.axis('off')
+# plt.title(f'Object Detection on {camera_channel}')
+# plt.show()
 
 # %%
 camera_channels = [
@@ -106,7 +106,7 @@ camera_channels = [
     'CAM_BACK_RIGHT'
 ]
 
-plt.figure(figsize=(20, 15))
+# plt.figure(figsize=(20, 15))
 
 for idx, camera_channel in enumerate(camera_channels):
     image, results = detect_objects_in_camera_image(
@@ -115,13 +115,13 @@ for idx, camera_channel in enumerate(camera_channels):
     
     annotated_image, detections = display_detections(results, image)
     
-    plt.subplot(2, 3, idx+1)
-    plt.imshow(annotated_image)
-    plt.title(f'{camera_channel} - {len(detections)} objects')
-    plt.axis('off')
+#     plt.subplot(2, 3, idx+1)
+#     plt.imshow(annotated_image)
+#     plt.title(f'{camera_channel} - {len(detections)} objects')
+#     plt.axis('off')
 
-plt.tight_layout()
-plt.show()
+# plt.tight_layout()
+# plt.show()
 
 
 # %%
@@ -254,12 +254,12 @@ def process_sample_for_camera(nusc, sample_token, camera_channel, nuscenes_root_
 example = process_sample_for_camera(nusc, sample_token, 'CAM_FRONT', nuscenes_root_dir, model, 0)
 
 # Display the example processed image with LiDAR points and object detection
-plt.figure(figsize=(15, 10))
-plt.imshow(cv2.cvtColor(example, cv2.COLOR_BGR2RGB))
-plt.axis('off')
-plt.title('Camera Image with LiDAR Points and Object Detection')
-plt.tight_layout()
-plt.show()
+# plt.figure(figsize=(15, 10))
+# plt.imshow(cv2.cvtColor(example, cv2.COLOR_BGR2RGB))
+# plt.axis('off')
+# plt.title('Camera Image with LiDAR Points and Object Detection')
+# plt.tight_layout()
+# plt.show()
 
 
 # %%

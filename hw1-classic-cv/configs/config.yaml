@@ -1,0 +1,5 @@
+paths:
+  train_dir: "/Users/alinamiller/Desktop/public_data/train"
+  test_dir: "/Users/alinamiller/Desktop/public_data/test"
+
+

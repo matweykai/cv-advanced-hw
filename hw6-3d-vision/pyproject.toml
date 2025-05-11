@@ -1,0 +1,22 @@
+[project]
+name = "hw6-3d-vision"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "clip",
+    "inference[yolo-world]>=0.49.1",
+    "matplotlib>=3.10.3",
+    "nbformat>=5.10.4",
+    "numpy>=2.2.5",
+    "nuscenes-devkit>=1.1.9",
+    "opencv-python>=4.10.0.84",
+    "plotly>=6.0.1",
+    "pyquaternion>=0.9.9",
+    "segment-anything>=1.0",
+    "ultralytics>=8.3.23",
+]
+
+[tool.uv.sources]
+clip = { git = "https://github.com/openai/CLIP.git" }
